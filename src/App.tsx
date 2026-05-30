@@ -605,7 +605,111 @@ function GroupsScreen({ user }: { user: User }) {
     </div>
   );
 }
+// ── Pricing Screen ─────────────────────────────────────────────────────────
+// ── Pricing Screen ─────────────────────────────────────────────────────────
+function PricingScreen({ user }: { user: User }) {
+  const plans = [
+    {
+      name: 'Starter',
+      price: '$69',
+      period: '/month',
+      description: 'Perfect for small churches getting started',
+      features: ['Up to 75 members', '5 admin seats', '10 small groups', '5 notification subgroups', 'Full messaging infrastructure', 'Push notifications included', 'QR attendance check-in', 'Prayer wall', 'Challenges and leaderboard'],
+      link: 'https://buy.stripe.com/test_28E8wPevd5si2P09aub3q00',
+      popular: false,
+    },
+    {
+      name: 'Growth',
+      price: '$147',
+      period: '/month',
+      description: 'For growing churches ready to go deeper',
+      features: ['Up to 250 members', '10 admin seats', '25 small groups', '20 notification subgroups', 'Room capacity management', 'Everything in Starter', "Children's check-in add-on available", 'AI Sermon Assistant add-on available'],
+      link: 'https://buy.stripe.com/test_14AaEXdr94oedtE0DYb3q01',
+      popular: true,
+    },
+    {
+      name: 'Kingdom',
+      price: '$247',
+      period: '/month',
+      description: 'Everything included for thriving churches',
+      features: ['Up to 1,000 members', 'Unlimited admin seats', 'Unlimited small groups', 'Unlimited subgroups', 'AI Sermon Assistant included', "Children's check-in included", 'Analytics Pro included', 'Multi-campus support', 'Everything in Growth'],
+      link: 'https://buy.stripe.com/test_7sY00j1Ir1c261c9aub3q02',
+      popular: false,
+    },
+  ];
 
+  const handleSubscribe = (link: string) => {
+    window.open(link, '_blank');
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      <div className="text-center py-4">
+        <h2 className="text-2xl font-bold text-gray-800">Choose Your Plan</h2>
+        <p className="text-gray-500 text-sm mt-1">30-day money back guarantee on all plans</p>
+      </div>
+
+      {plans.map((plan, i) => (
+        <div key={i} className={`bg-white rounded-xl p-5 shadow-sm border-2 ${plan.popular ? 'border-purple-500' : 'border-gray-100'} relative`}>
+          {plan.popular && (
+            <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
+              <span className="bg-purple-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                MOST POPULAR
+              </span>
+            </div>
+          )}
+          <div className="flex justify-between items-start mb-3">
+            <div>
+              <h3 className="text-xl font-bold text-gray-800">{plan.name}</h3>
+              <p className="text-gray-500 text-xs mt-1">{plan.description}</p>
+            </div>
+            <div className="text-right">
+              <span className="text-3xl font-bold text-gray-800">{plan.price}</span>
+              <span className="text-gray-500 text-sm">{plan.period}</span>
+            </div>
+          </div>
+          <div className="space-y-2 mb-4">
+            {plan.features.map((feature, j) => (
+              <div key={j} className="flex items-center gap-2">
+                <span className="text-green-500 text-sm font-bold">✓</span>
+                <span className="text-gray-600 text-sm">{feature}</span>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => handleSubscribe(plan.link)}
+            className="w-full py-3 rounded-lg text-white font-bold transition-all"
+            style={{ backgroundColor: '#6B21A8' }}>
+            Subscribe to {plan.name}
+          </button>
+        </div>
+      ))}
+
+      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
+        <div className="flex justify-between items-center">
+          <div>
+            <h3 className="font-bold text-gray-800">Concierge Launch</h3>
+            <p className="text-gray-500 text-xs mt-1">Hands-on onboarding with a dedicated rep for 30 days</p>
+          </div>
+          <div className="text-right">
+            <span className="text-2xl font-bold text-gray-800">$199</span>
+            <p className="text-gray-500 text-xs">one time</p>
+          </div>
+        </div>
+        <button
+          onClick={() => handleSubscribe('https://buy.stripe.com/test_6oUcN5dr99IyfBMdqKb3q04')}
+          className="w-full mt-3 py-2 rounded-lg font-bold text-sm"
+          style={{ backgroundColor: '#F3F4F6', color: '#374151' }}>
+          Add Concierge Launch
+        </button>
+      </div>
+
+      <p className="text-center text-xs text-gray-400 pb-4">
+        All plans include a 30-day money back guarantee. Cancel anytime.
+      </p>
+    </div>
+  );
+}
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user }: { user: User }) {
   const stats = [
@@ -762,6 +866,7 @@ function App() {
       case 'community': return <CommunityScreen user={user} />;
       case 'groups': return <GroupsScreen user={user} />;
       case 'admin': return <AdminScreen user={user} />;
+      case 'pricing': return <PricingScreen user={user} />;
       default: return <HomeScreen user={user} />;
     }
   };
@@ -786,6 +891,12 @@ function App() {
               style={{ backgroundColor: user.church.primaryColor }}>
               {user.name.charAt(0)}
             </div>
+            <button
+              onClick={() => setActiveTab('pricing')}
+              className="text-xs font-semibold px-2 py-1 rounded-lg text-white"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Upgrade
+            </button>
             <button
               onClick={async () => {
                 await supabase.auth.signOut();
