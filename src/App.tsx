@@ -41,11 +41,25 @@ const demoUser: User = {
   church: demoChurch,
 };
 
+// ── Login Screen ───────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [churchName, setChurchName] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+
+  const passwordCriteria = [
+    { label: 'At least 8 characters', met: password.length >= 8 },
+    { label: 'At least one uppercase letter', met: /[A-Z]/.test(password) },
+    { label: 'At least one number', met: /[0-9]/.test(password) },
+    { label: 'At least one special character (!@#$%)', met: /[!@#$%^&*]/.test(password) },
+  ];
+
+  const passwordsMatch = password === confirmPassword && confirmPassword.length > 0;
+  const allCriteriaMet = passwordCriteria.every(c => c.met);
 
   const handleLogin = async () => {
     if (!email || !password) return;
@@ -62,19 +76,46 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
       alert('Please fill in all fields');
       return;
     }
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) {
-      alert(error.message);
+    if (!allCriteriaMet) {
+      alert('Please make sure your password meets all requirements');
       return;
     }
-    if (data.user) {
-      await supabase.from('churches').insert({
-        name: churchName,
-        tagline: '',
-        primary_color: '#6B21A8',
-        logo_initials: churchName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+    if (!passwordsMatch) {
+      alert('Passwords do not match');
+      return;
+    }
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
+    if (signUpError) {
+      alert(signUpError.message);
+      return;
+    }
+    if (signUpData.user) {
+      const { data: churchData, error: churchError } = await supabase
+        .from('churches')
+        .insert({
+          name: churchName,
+          tagline: '',
+          primary_color: '#6B21A8',
+          logo_initials: churchName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+        })
+        .select()
+        .single();
+
+      if (churchError || !churchData) {
+        alert('Church setup failed. Please contact support.');
+        return;
+      }
+
+      await supabase.from('profiles').insert({
+        id: signUpData.user.id,
+        church_id: churchData.id,
+        full_name: '',
+        role: 'super_admin',
+        points: 0,
+        streak: 0,
       });
-      alert('Account created! Please sign in.');
+
+      alert('Church account created! Please sign in.');
       setIsSignUp(false);
     }
   };
@@ -82,8 +123,8 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   return (
     <div className="min-h-screen flex items-center justify-center"
       style={{ backgroundColor: '#0F0620' }}>
-      <div className="w-full max-w-md px-8">
-        <div className="text-center mb-10">
+      <div className="w-full max-w-md px-8 py-10">
+        <div className="text-center mb-8">
           <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4"
             style={{ backgroundColor: demoChurch.primaryColor }}>
             <span className="text-white text-2xl font-bold">
@@ -101,6 +142,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
             <p className="text-gray-500 text-xs italic">Built for flourishing.</p>
           </div>
         </div>
+
         <div className="space-y-4">
           {isSignUp && (
             <input
@@ -111,6 +153,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
               className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
             />
           )}
+
           <input
             type="email"
             placeholder="Email address"
@@ -118,24 +161,88 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
             className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-            className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
-          />
+
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Password"
+              value={password}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500 pr-12"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white text-sm">
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+
+          {isSignUp && password.length > 0 && (
+            <div className="bg-gray-800 rounded-lg p-3 space-y-1">
+              <p className="text-xs text-gray-400 font-semibold mb-2">Password requirements:</p>
+              {passwordCriteria.map((c, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className={`text-xs font-bold ${c.met ? 'text-green-400' : 'text-gray-600'}`}>
+                    {c.met ? '✓' : '○'}
+                  </span>
+                  <span className={`text-xs ${c.met ? 'text-green-400' : 'text-gray-500'}`}>
+                    {c.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {isSignUp && (
+            <div>
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  placeholder="Confirm password"
+                  value={confirmPassword}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
+                  className={`w-full px-4 py-3 rounded-lg bg-gray-800 text-white border focus:outline-none pr-12 ${
+                    confirmPassword.length > 0
+                      ? passwordsMatch
+                        ? 'border-green-500'
+                        : 'border-red-500'
+                      : 'border-gray-700 focus:border-purple-500'
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white text-sm">
+                  {showConfirmPassword ? 'Hide' : 'Show'}
+                </button>
+              </div>
+              {confirmPassword.length > 0 && (
+                <p className={`text-xs mt-1 ml-1 ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
+                  {passwordsMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                </p>
+              )}
+            </div>
+          )}
+
           <button
             onClick={isSignUp ? handleSignUp : handleLogin}
             className="w-full py-3 rounded-lg font-bold text-white text-lg transition-all"
             style={{ backgroundColor: demoChurch.primaryColor }}>
             {isSignUp ? 'Create Church Account' : 'Sign In'}
           </button>
+
           <p className="text-center text-gray-500 text-sm">
             {isSignUp ? 'Already have an account? ' : 'New to Floremus? '}
             <span
               className="text-purple-400 cursor-pointer"
-              onClick={() => setIsSignUp(!isSignUp)}>
+              onClick={() => {
+                setIsSignUp(!isSignUp);
+                setPassword('');
+                setConfirmPassword('');
+                setShowPassword(false);
+                setShowConfirmPassword(false);
+              }}>
               {isSignUp ? 'Sign in' : 'Create church account'}
             </span>
           </p>
@@ -144,6 +251,8 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
     </div>
   );
 }
+
+// ── Bottom Navigation ──────────────────────────────────────────────────────
 function BottomNav({ active, setActive, color }: {
   active: string;
   setActive: (tab: string) => void;
@@ -282,7 +391,7 @@ function SundayScreen({ user }: { user: User }) {
                     type="text"
                     placeholder="Type your answer..."
                     value={answers[i] || ''}
-                    onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnswers({ ...answers, [i]: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
                   />
                 </div>
@@ -292,7 +401,7 @@ function SundayScreen({ user }: { user: User }) {
                   <textarea
                     placeholder="Write your reflection..."
                     value={answers[i] || ''}
-                    onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setAnswers({ ...answers, [i]: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400 h-20 resize-none"
                   />
                 </div>
@@ -346,7 +455,7 @@ function CommunityScreen({ user }: { user: User }) {
             <textarea
               placeholder="Share a prayer request with your church..."
               value={prayerText}
-              onChange={e => setPrayerText(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrayerText(e.target.value)}
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg px-3 py-2 h-20 resize-none focus:outline-none focus:border-purple-400"
             />
             <button className="mt-2 px-4 py-2 rounded-lg text-white text-sm font-semibold"
@@ -381,7 +490,7 @@ function CommunityScreen({ user }: { user: User }) {
               <p className="text-xs text-gray-500 mb-3">{c.participants} participants  |  {c.points} points</p>
               {c.type === 'Streak' && (
                 <div className="flex gap-1">
-            {Array.from({ length: c.total ?? 0 }).map((_, d) => (
+                  {Array.from({ length: c.total ?? 0 }).map((_, d) => (
                     <div key={d} className="flex-1 h-2 rounded-full"
                       style={{ backgroundColor: d < (c.day ?? 0) ? user.church.primaryColor : '#E5E7EB' }} />
                   ))}
@@ -570,17 +679,58 @@ function App() {
   const [activeTab, setActiveTab] = useState('home');
   const [loading, setLoading] = useState(true);
 
+  const loadUserProfile = async (session: any) => {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .maybeSingle();
+
+    if (profile && profile.church_id) {
+      const { data: churchData } = await supabase
+        .from('churches')
+        .select('*')
+        .eq('id', profile.church_id)
+        .maybeSingle();
+
+      if (churchData) {
+        setUser({
+          id: session.user.id,
+          name: profile.full_name || session.user.email,
+          email: session.user.email,
+          role: profile.role || 'member',
+          points: profile.points || 0,
+          streak: profile.streak || 0,
+          church: {
+            id: churchData.id,
+            name: churchData.name,
+            tagline: churchData.tagline || '',
+            primaryColor: churchData.primary_color || '#6B21A8',
+            secondaryColor: churchData.secondary_color || '#C0C0C0',
+            logoInitials: churchData.logo_initials || 'FC',
+          },
+        });
+      } else {
+        setUser(demoUser);
+      }
+    } else {
+      setUser(demoUser);
+    }
+    setLoading(false);
+  };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) {
-        setUser(demoUser);
+        loadUserProfile(session);
+      } else {
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
-        setUser(demoUser);
+        loadUserProfile(session);
       } else {
         setUser(null);
       }
@@ -591,7 +741,8 @@ function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#0F0620' }}>
+      <div className="min-h-screen flex items-center justify-center"
+        style={{ backgroundColor: '#0F0620' }}>
         <div className="text-center">
           <p className="text-yellow-500 text-xl font-bold">Floremus</p>
           <p className="text-gray-400 text-sm italic mt-1">Built for flourishing.</p>
