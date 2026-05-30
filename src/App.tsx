@@ -41,21 +41,41 @@ const demoUser: User = {
   church: demoChurch,
 };
 
-// ── Login Screen ───────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [churchName, setChurchName] = useState('');
 
   const handleLogin = async () => {
     if (!email || !password) return;
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       alert(error.message);
     } else if (data.user) {
       onLogin(demoUser);
+    }
+  };
+
+  const handleSignUp = async () => {
+    if (!email || !password || !churchName) {
+      alert('Please fill in all fields');
+      return;
+    }
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    if (data.user) {
+      await supabase.from('churches').insert({
+        name: churchName,
+        tagline: '',
+        primary_color: '#6B21A8',
+        logo_initials: churchName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
+      });
+      alert('Account created! Please sign in.');
+      setIsSignUp(false);
     }
   };
 
@@ -66,47 +86,64 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
         <div className="text-center mb-10">
           <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4"
             style={{ backgroundColor: demoChurch.primaryColor }}>
-            <span className="text-white text-2xl font-bold">{demoChurch.logoInitials}</span>
+            <span className="text-white text-2xl font-bold">
+              {isSignUp ? '+' : demoChurch.logoInitials}
+            </span>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-1">{demoChurch.name}</h1>
-          <p className="text-gray-400 italic">{demoChurch.tagline}</p>
+          <h1 className="text-3xl font-bold text-white mb-1">
+            {isSignUp ? 'Create Your Church' : demoChurch.name}
+          </h1>
+          <p className="text-gray-400 italic">
+            {isSignUp ? 'Get started with Floremus' : demoChurch.tagline}
+          </p>
           <div className="mt-4 border-t border-gray-700 pt-4">
             <p className="text-yellow-500 text-sm font-semibold tracking-widest">FLOREMUS</p>
             <p className="text-gray-500 text-xs italic">Built for flourishing.</p>
           </div>
         </div>
         <div className="space-y-4">
+          {isSignUp && (
+            <input
+              type="text"
+              placeholder="Church name"
+              value={churchName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setChurchName(e.target.value)}
+              className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
+            />
+          )}
           <input
             type="email"
             placeholder="Email address"
             value={email}
-            onChange={e => setEmail(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
             className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
           />
           <input
             type="password"
             placeholder="Password"
             value={password}
-            onChange={e => setPassword(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
             className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
           />
           <button
-            onClick={handleLogin}
+            onClick={isSignUp ? handleSignUp : handleLogin}
             className="w-full py-3 rounded-lg font-bold text-white text-lg transition-all"
             style={{ backgroundColor: demoChurch.primaryColor }}>
-            Sign In
+            {isSignUp ? 'Create Church Account' : 'Sign In'}
           </button>
           <p className="text-center text-gray-500 text-sm">
-            New to Floremus?{' '}
-            <span className="text-purple-400 cursor-pointer">Request an invite</span>
+            {isSignUp ? 'Already have an account? ' : 'New to Floremus? '}
+            <span
+              className="text-purple-400 cursor-pointer"
+              onClick={() => setIsSignUp(!isSignUp)}>
+              {isSignUp ? 'Sign in' : 'Create church account'}
+            </span>
           </p>
         </div>
       </div>
     </div>
   );
 }
-
-// ── Bottom Navigation ──────────────────────────────────────────────────────
 function BottomNav({ active, setActive, color }: {
   active: string;
   setActive: (tab: string) => void;
@@ -598,6 +635,14 @@ function App() {
               style={{ backgroundColor: user.church.primaryColor }}>
               {user.name.charAt(0)}
             </div>
+            <button
+              onClick={async () => {
+                await supabase.auth.signOut();
+                setUser(null);
+              }}
+              className="text-xs text-gray-400 hover:text-red-400 ml-1">
+              Sign out
+            </button>
           </div>
         </div>
         <div className="pb-20">
