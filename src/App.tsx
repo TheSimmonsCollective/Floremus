@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { supabase } from './supabase';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Church {
@@ -45,8 +46,17 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
-  const handleLogin = () => {
-    onLogin(demoUser);
+  const handleLogin = async () => {
+    if (!email || !password) return;
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) {
+      alert(error.message);
+    } else if (data.user) {
+      onLogin(demoUser);
+    }
   };
 
   return (
@@ -521,6 +531,37 @@ function AdminScreen({ user }: { user: User }) {
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState('home');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setUser(demoUser);
+      }
+      setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        setUser(demoUser);
+      } else {
+        setUser(null);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: '#0F0620' }}>
+        <div className="text-center">
+          <p className="text-yellow-500 text-xl font-bold">Floremus</p>
+          <p className="text-gray-400 text-sm italic mt-1">Built for flourishing.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return <LoginScreen onLogin={setUser} />;
