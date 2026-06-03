@@ -1,5 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase';
+
+// ── Brand ──────────────────────────────────────────────────────────────────
+const BRAND = {
+  purple: '#6B21A8',
+  plum: '#0F0620',
+  sage: '#8FA382',
+  silver: '#C0C6CC',
+  white: '#FFFFFF',
+  bg: '#F9FAFB',
+};
+
+const LOGOS = {
+  silver: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/FloremusSilverLogo.png',
+  noTagline: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/FloremusLogoNoTagline.png',
+  withTagline: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/FloremusLogoWithTagline.png',
+  seal: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/ChatGPT%20Image%20Jun%202,%202026,%2011_55_40%20PM.png',
+};
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Church {
@@ -9,278 +26,288 @@ interface Church {
   primaryColor: string;
   secondaryColor: string;
   logoInitials: string;
+  logoUrl?: string;
+  subscriptionStatus?: string;
+  subscriptionTier?: string;
 }
 
 interface User {
   id: string;
   name: string;
   email: string;
-  role: 'super_admin' | 'admin' | 'member';
+  role: 'super_admin' | 'admin' | 'group_leader' | 'children_worker' | 'member';
   points: number;
   streak: number;
   church: Church;
+  avatarUrl?: string;
+  directoryOptIn?: boolean;
+  bio?: string;
+  phone?: string;
 }
 
-// ── Demo Data ──────────────────────────────────────────────────────────────
-const demoChurch: Church = {
-  id: '1',
-  name: 'Latter Rain Church Charlotte',
-  tagline: 'Where the Spirit Falls',
-  primaryColor: '#6B21A8',
-  secondaryColor: '#C0C0C0',
-  logoInitials: 'LR',
-};
+interface Message {
+  id: string;
+  content: string;
+  author_id: string;
+  author_name: string;
+  author_avatar?: string;
+  created_at: string;
+  group_id?: string | null;
+}
 
-const demoUser: User = {
-  id: '1',
-  name: 'Pastor Charles Simmons',
-  email: 'pastor@latterraincharlotte.com',
-  role: 'super_admin',
-  points: 1240,
-  streak: 14,
-  church: demoChurch,
-};
+interface GivingFund {
+  id: string;
+  name: string;
+  description?: string;
+  is_active: boolean;
+  is_default: boolean;
+}
+
+interface TheologySettings {
+  denomination: string;
+  statement_of_faith: string;
+  bible_translation: string;
+  worship_style: string;
+  theological_positions: string;
+  restricted_topics: string;
+}
+
+interface SermonDraft {
+  id?: string;
+  sermon_outline: string;
+  generated_devotionals?: any[];
+  generated_questions?: string[];
+  generated_challenge?: any;
+  generated_prayer?: string;
+  generated_announcement?: string;
+  generated_social?: Record<string, string>;
+  admin_notes?: string;
+  status: string;
+}
+
+// ── Helper Components ──────────────────────────────────────────────────────
+function FloremusLogo({ size = 80, variant = 'silver' }: { size?: number; variant?: keyof typeof LOGOS }) {
+  return (
+    <img
+      src={LOGOS[variant]}
+      alt="Floremus"
+      style={{ width: size, height: size, objectFit: 'contain' }}
+    />
+  );
+}
+
+function Avatar({ url, name, size = 36, color }: { url?: string; name: string; size?: number; color?: string }) {
+  if (url) {
+    return (
+      <img
+        src={url}
+        alt={name}
+        className="rounded-full object-cover flex-shrink-0"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  return (
+    <div
+      className="rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
+      style={{ width: size, height: size, backgroundColor: color || BRAND.purple, fontSize: Math.max(10, size * 0.35) }}
+    >
+      {(name || '?').charAt(0).toUpperCase()}
+    </div>
+  );
+}
 
 // ── Login Screen ───────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
+function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
+  const [confirm, setConfirm] = useState('');
+  const [pastorName, setPastorName] = useState('');
   const [churchName, setChurchName] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const [showCf, setShowCf] = useState(false);
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [isReset, setIsReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [loading, setLoading] = useState(false);
 
-  const passwordCriteria = [
+  const criteria = [
     { label: 'At least 8 characters', met: password.length >= 8 },
-    { label: 'At least one uppercase letter', met: /[A-Z]/.test(password) },
-    { label: 'At least one number', met: /[0-9]/.test(password) },
-    { label: 'At least one special character (!@#$%)', met: /[!@#$%^&*]/.test(password) },
+    { label: 'One uppercase letter', met: /[A-Z]/.test(password) },
+    { label: 'One number', met: /[0-9]/.test(password) },
+    { label: 'One special character (!@#$%)', met: /[!@#$%^&*]/.test(password) },
   ];
+  const pwMatch = password === confirm && confirm.length > 0;
+  const pwReady = criteria.every(c => c.met);
 
-  const passwordsMatch = password === confirmPassword && confirmPassword.length > 0;
-  const allCriteriaMet = passwordCriteria.every(c => c.met);
+  const inputCls = 'w-full px-4 py-3 rounded-xl text-white border focus:outline-none focus:border-purple-400';
+  const inputSty = { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' };
 
-  const handleLogin = async () => {
+  async function login() {
     if (!email || !password) return;
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      alert(error.message);
-    } else if (data.user) {
-      onLogin(demoUser);
-    }
-  };
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) alert(error.message);
+    setLoading(false);
+  }
 
-  const handleSignUp = async () => {
-    if (!email || !password || !churchName) {
+  async function signup() {
+    if (!email || !password || !churchName || !pastorName) {
       alert('Please fill in all fields');
       return;
     }
-    if (!allCriteriaMet) {
-      alert('Please make sure your password meets all requirements');
-      return;
-    }
-    if (!passwordsMatch) {
-      alert('Passwords do not match');
-      return;
-    }
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
-    if (signUpError) {
-      alert(signUpError.message);
-      return;
-    }
-    if (signUpData.user) {
-      const { data: churchData, error: churchError } = await supabase
+    if (!pwReady) { alert('Password does not meet all requirements'); return; }
+    if (!pwMatch) { alert('Passwords do not match'); return; }
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) { alert(error.message); setLoading(false); return; }
+    if (data.user) {
+      const initials = churchName.split(' ').map((w: string) => w[0] || '').join('').slice(0, 2).toUpperCase();
+      const { data: church, error: ce } = await supabase
         .from('churches')
-        .insert({
-          name: churchName,
-          tagline: '',
-          primary_color: '#6B21A8',
-          logo_initials: churchName.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase(),
-        })
+        .insert({ name: churchName, tagline: '', primary_color: BRAND.purple, logo_initials: initials, subscription_status: 'trial', subscription_tier: 'starter' })
         .select()
         .single();
-
-      if (churchError || !churchData) {
-        alert('Church setup failed. Please contact support.');
-        return;
-      }
-
-      await supabase.from('profiles').insert({
-        id: signUpData.user.id,
-        church_id: churchData.id,
-        full_name: '',
-        role: 'super_admin',
-        points: 0,
-        streak: 0,
-      });
-
-      alert('Church account created! Please sign in.');
+      if (ce || !church) { alert('Church setup failed. Please contact support.'); setLoading(false); return; }
+      await supabase.from('profiles').insert({ id: data.user.id, church_id: church.id, full_name: pastorName, role: 'super_admin', points: 0, streak: 0 });
+      await supabase.from('giving_funds').insert({ church_id: church.id, name: 'General Offering', description: 'General church giving', is_default: true, is_active: true });
+      alert('Account created! Please sign in.');
       setIsSignUp(false);
     }
-  };
+    setLoading(false);
+  }
+
+  async function resetPassword() {
+    if (!email) { alert('Enter your email first'); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    if (error) alert(error.message);
+    else setResetSent(true);
+    setLoading(false);
+  }
 
   return (
-    <div className="min-h-screen flex items-center justify-center"
-      style={{ backgroundColor: '#0F0620' }}>
-      <div className="w-full max-w-md px-8 py-10">
-        <div className="text-center mb-8">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4"
-            style={{ backgroundColor: demoChurch.primaryColor }}>
-            <span className="text-white text-2xl font-bold">
-              {isSignUp ? '+' : demoChurch.logoInitials}
-            </span>
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-1">
-            {isSignUp ? 'Create Your Church' : demoChurch.name}
-          </h1>
-          <p className="text-gray-400 italic">
-            {isSignUp ? 'Get started with Floremus' : demoChurch.tagline}
-          </p>
-          <div className="mt-4 border-t border-gray-700 pt-4">
-            <p className="text-yellow-500 text-sm font-semibold tracking-widest">FLOREMUS</p>
-            <p className="text-gray-500 text-xs italic">Built for flourishing.</p>
-          </div>
+    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={180} variant="withTagline" />
         </div>
 
-        <div className="space-y-4">
-          {isSignUp && (
-            <input
-              type="text"
-              placeholder="Church name"
-              value={churchName}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setChurchName(e.target.value)}
-              className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
-            />
-          )}
-
-          <input
-            type="email"
-            placeholder="Email address"
-            value={email}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
-            className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500"
-          />
-
-          <div className="relative">
-            <input
-              type={showPassword ? 'text' : 'password'}
-              placeholder="Password"
-              value={password}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-lg bg-gray-800 text-white border border-gray-700 focus:outline-none focus:border-purple-500 pr-12"
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white text-sm">
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
-          </div>
-
-          {isSignUp && password.length > 0 && (
-            <div className="bg-gray-800 rounded-lg p-3 space-y-1">
-              <p className="text-xs text-gray-400 font-semibold mb-2">Password requirements:</p>
-              {passwordCriteria.map((c, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className={`text-xs font-bold ${c.met ? 'text-green-400' : 'text-gray-600'}`}>
-                    {c.met ? '✓' : '○'}
-                  </span>
-                  <span className={`text-xs ${c.met ? 'text-green-400' : 'text-gray-500'}`}>
-                    {c.label}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {isSignUp && (
-            <div>
-              <div className="relative">
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Confirm password"
-                  value={confirmPassword}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
-                  className={`w-full px-4 py-3 rounded-lg bg-gray-800 text-white border focus:outline-none pr-12 ${
-                    confirmPassword.length > 0
-                      ? passwordsMatch
-                        ? 'border-green-500'
-                        : 'border-red-500'
-                      : 'border-gray-700 focus:border-purple-500'
-                  }`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white text-sm">
-                  {showConfirmPassword ? 'Hide' : 'Show'}
+        {isReset ? (
+          <div className="space-y-4">
+            {resetSent ? (
+              <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                <p className="text-white font-semibold mb-2">Reset email sent</p>
+                <p className="text-gray-400 text-sm mb-4">Check your inbox for the reset link.</p>
+                <button onClick={() => { setIsReset(false); setResetSent(false); }} className="text-sm" style={{ color: BRAND.sage }}>
+                  Back to sign in
                 </button>
               </div>
-              {confirmPassword.length > 0 && (
-                <p className={`text-xs mt-1 ml-1 ${passwordsMatch ? 'text-green-400' : 'text-red-400'}`}>
-                  {passwordsMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
-                </p>
-              )}
+            ) : (
+              <>
+                <input type="email" placeholder="Email address" value={email}
+                  onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
+                <button onClick={resetPassword} disabled={loading}
+                  className="w-full py-3 rounded-xl font-bold text-white" style={{ backgroundColor: BRAND.purple }}>
+                  {loading ? 'Sending...' : 'Send Reset Link'}
+                </button>
+                <button onClick={() => setIsReset(false)} className="w-full text-sm text-center" style={{ color: BRAND.sage }}>
+                  Back to sign in
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {isSignUp && (
+              <>
+                <input type="text" placeholder="Your full name" value={pastorName}
+                  onChange={e => setPastorName(e.target.value)} className={inputCls} style={inputSty} />
+                <input type="text" placeholder="Church name" value={churchName}
+                  onChange={e => setChurchName(e.target.value)} className={inputCls} style={inputSty} />
+              </>
+            )}
+            <input type="email" placeholder="Email address" value={email}
+              onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
+            <div className="relative">
+              <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password}
+                onChange={e => setPassword(e.target.value)} className={inputCls + ' pr-16'} style={inputSty} />
+              <button type="button" onClick={() => setShowPw(!showPw)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
+                {showPw ? 'Hide' : 'Show'}
+              </button>
             </div>
-          )}
-
-          <button
-            onClick={isSignUp ? handleSignUp : handleLogin}
-            className="w-full py-3 rounded-lg font-bold text-white text-lg transition-all"
-            style={{ backgroundColor: demoChurch.primaryColor }}>
-            {isSignUp ? 'Create Church Account' : 'Sign In'}
-          </button>
-
-          <p className="text-center text-gray-500 text-sm">
-            {isSignUp ? 'Already have an account? ' : 'New to Floremus? '}
-            <span
-              className="text-purple-400 cursor-pointer"
-              onClick={() => {
-                setIsSignUp(!isSignUp);
-                setPassword('');
-                setConfirmPassword('');
-                setShowPassword(false);
-                setShowConfirmPassword(false);
-              }}>
-              {isSignUp ? 'Sign in' : 'Create church account'}
-            </span>
-          </p>
-        </div>
+            {isSignUp && password.length > 0 && (
+              <div className="rounded-xl p-3 space-y-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: BRAND.silver }}>Password requirements:</p>
+                {criteria.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.met ? '✓' : '○'}</span>
+                    <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {isSignUp && (
+              <div>
+                <div className="relative">
+                  <input type={showCf ? 'text' : 'password'} placeholder="Confirm password" value={confirm}
+                    onChange={e => setConfirm(e.target.value)} className={inputCls + ' pr-16'}
+                    style={{ ...inputSty, borderColor: confirm.length > 0 ? (pwMatch ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.15)' }} />
+                  <button type="button" onClick={() => setShowCf(!showCf)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
+                    {showCf ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                {confirm.length > 0 && (
+                  <p className="text-xs mt-1 ml-1" style={{ color: pwMatch ? '#4ade80' : '#f87171' }}>
+                    {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                  </p>
+                )}
+              </div>
+            )}
+            <button onClick={isSignUp ? signup : login} disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-white text-lg"
+              style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
+              {loading ? 'Please wait...' : isSignUp ? 'Create Church Account' : 'Sign In'}
+            </button>
+            {!isSignUp && (
+              <button onClick={() => setIsReset(true)} className="w-full text-sm text-center" style={{ color: BRAND.silver }}>
+                Forgot your password?
+              </button>
+            )}
+            <p className="text-center text-sm" style={{ color: BRAND.silver }}>
+              {isSignUp ? 'Already have an account? ' : 'New to Floremus? '}
+              <span className="font-semibold cursor-pointer" style={{ color: BRAND.sage }}
+                onClick={() => { setIsSignUp(!isSignUp); setPassword(''); setConfirm(''); }}>
+                {isSignUp ? 'Sign in' : 'Create church account'}
+              </span>
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 // ── Bottom Navigation ──────────────────────────────────────────────────────
-function BottomNav({ active, setActive, color }: {
-  active: string;
-  setActive: (tab: string) => void;
-  color: string;
-}) {
+function BottomNav({ active, setActive, color }: { active: string; setActive: (t: string) => void; color: string }) {
   const tabs = [
     { id: 'home', label: 'Home', icon: '🏠' },
     { id: 'sunday', label: 'Sunday', icon: '📖' },
     { id: 'community', label: 'Community', icon: '🙏' },
     { id: 'groups', label: 'Groups', icon: '👥' },
-    { id: 'admin', label: 'Admin', icon: '⚙️' },
+    { id: 'more', label: 'More', icon: '☰' },
   ];
-
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex">
-      {tabs.map(tab => (
-        <button
-          key={tab.id}
-          onClick={() => setActive(tab.id)}
-          className="flex-1 py-3 flex flex-col items-center gap-1 transition-all">
-          <span className="text-xl">{tab.icon}</span>
-          <span className="text-xs font-medium"
-            style={{ color: active === tab.id ? color : '#9CA3AF' }}>
-            {tab.label}
-          </span>
-          {active === tab.id && (
-            <div className="w-1 h-1 rounded-full" style={{ backgroundColor: color }} />
-          )}
+    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex max-w-md mx-auto z-20">
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => setActive(t.id)} className="flex-1 py-2 flex flex-col items-center gap-0.5">
+          <span className="text-lg">{t.icon}</span>
+          <span className="text-xs font-medium" style={{ color: active === t.id ? color : '#9CA3AF' }}>{t.label}</span>
+          {active === t.id && <div className="w-1 h-1 rounded-full" style={{ backgroundColor: color }} />}
         </button>
       ))}
     </div>
@@ -288,221 +315,671 @@ function BottomNav({ active, setActive, color }: {
 }
 
 // ── Home Screen ────────────────────────────────────────────────────────────
-function HomeScreen({ user }: { user: User }) {
+function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: string) => void }) {
+  const [events, setEvents] = useState<any[]>([]);
+  const [devotional, setDevotional] = useState<any>(null);
+  const [pinned, setPinned] = useState<any[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data: ev } = await supabase.from('events').select('*')
+        .eq('church_id', user.church.id)
+        .gte('event_date', new Date().toISOString())
+        .order('event_date', { ascending: true }).limit(3);
+      if (ev) setEvents(ev);
+
+      const day = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+      const { data: dv } = await supabase.from('devotionals').select('*')
+        .eq('church_id', user.church.id).eq('day_of_week', day)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (dv) setDevotional(dv);
+
+    const { data: an } = await supabase.from('announcements').select('*')
+        .eq('church_id', user.church.id).eq('approved', true)
+        .order('pinned', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(3);
+      if (an) setPinned(an);
+    })();
+  }, [user.church.id]);
+
+  const links = [
+    { icon: '📖', title: "Today's Devotional", sub: devotional?.title || 'No devotional today', tab: 'community' },
+    { icon: '🙏', title: 'Prayer Wall', sub: 'Share and receive prayer', tab: 'community' },
+    { icon: '⚡', title: 'Challenges', sub: 'View active challenges', tab: 'community' },
+    { icon: '💳', title: 'Give', sub: 'Support your church', tab: 'more' },
+  ];
+
   return (
-    <div className="p-4 space-y-4">
-      <div className="rounded-xl p-5 text-white"
-        style={{ backgroundColor: user.church.primaryColor }}>
-        <p className="text-sm opacity-80">Good morning,</p>
-        <h2 className="text-2xl font-bold">{user.name}</h2>
-        <div className="flex gap-6 mt-3">
+    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      <div className="rounded-2xl p-5 text-white shadow-lg"
+        style={{ background: `linear-gradient(135deg, ${user.church.primaryColor}, ${BRAND.plum})` }}>
+        <div className="flex items-center justify-between mb-3">
           <div>
-            <p className="text-xs opacity-70">Points</p>
-            <p className="text-xl font-bold">{user.points.toLocaleString()}</p>
+            <p className="text-sm opacity-80">Welcome back,</p>
+            <h2 className="text-2xl font-bold">{user.name || user.email}</h2>
+            <p className="text-xs opacity-70 mt-1">{user.church.name}</p>
           </div>
-          <div>
-            <p className="text-xs opacity-70">Streak</p>
-            <p className="text-xl font-bold">{user.streak} days 🔥</p>
-          </div>
+          <Avatar url={user.avatarUrl} name={user.name || user.email} size={50} color={BRAND.silver} />
+        </div>
+        <div className="flex gap-6 mt-2 pt-3 border-t border-white/20">
+          <div><p className="text-xs opacity-70">Points</p><p className="text-xl font-bold">{user.points.toLocaleString()}</p></div>
+          <div><p className="text-xs opacity-70">Streak</p><p className="text-xl font-bold">{user.streak} days 🔥</p></div>
+          <div><p className="text-xs opacity-70">Role</p><p className="text-sm font-semibold capitalize">{user.role.replace('_', ' ')}</p></div>
         </div>
       </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">Today at {user.church.name}</h3>
-        <div className="space-y-3">
-          {[
-            { icon: '📖', title: "Today's Devotional", sub: 'Walking in the Spirit - Day 14' },
-            { icon: '🙏', title: 'Prayer Wall', sub: '12 new prayer requests' },
-            { icon: '⚡', title: 'Active Challenge', sub: '7-Day Prayer Fast - Day 3' },
-            { icon: '📣', title: 'Announcements', sub: 'Youth Night this Friday at 7PM' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50">
-              <span className="text-2xl">{item.icon}</span>
-              <div>
-                <p className="font-semibold text-gray-800 text-sm">{item.title}</p>
-                <p className="text-gray-500 text-xs">{item.sub}</p>
-              </div>
-            </div>
-          ))}
+
+      {pinned.map((a, i) => (
+        <div key={i} className="rounded-xl p-3 border-l-4 bg-white" style={{ borderColor: user.church.primaryColor }}>
+          <p className="font-semibold text-gray-800 text-sm">📣 {a.title}</p>
+          {a.body && <p className="text-gray-500 text-xs mt-1">{a.body}</p>}
         </div>
-      </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">Upcoming Events</h3>
+      ))}
+
+      <div className="bg-white rounded-2xl p-4 shadow-sm">
+        <h3 className="font-bold text-gray-800 mb-3">Quick Access</h3>
         <div className="space-y-2">
-          {[
-            { date: 'Jun 1', title: 'Sunday Service', time: '10:00 AM' },
-            { date: 'Jun 3', title: 'Youth Night', time: '7:00 PM' },
-            { date: 'Jun 7', title: 'Prayer & Fasting', time: '6:00 AM' },
-          ].map((event, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg flex flex-col items-center justify-center text-white text-xs font-bold"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                {event.date.split(' ')[1]}
-                <span className="text-xs opacity-80">{event.date.split(' ')[0]}</span>
+          {links.map((l, i) => (
+            <button key={i} onClick={() => setActiveTab(l.tab)}
+              className="w-full flex items-center gap-3 p-3 rounded-xl bg-gray-50 text-left">
+              <span className="text-xl">{l.icon}</span>
+              <div className="flex-1">
+                <p className="font-semibold text-gray-800 text-sm">{l.title}</p>
+                <p className="text-gray-500 text-xs">{l.sub}</p>
               </div>
-              <div>
-                <p className="font-semibold text-gray-800 text-sm">{event.title}</p>
-                <p className="text-gray-500 text-xs">{event.time}</p>
-              </div>
-            </div>
+              <span className="text-gray-400">›</span>
+            </button>
           ))}
         </div>
       </div>
+
+      {events.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <h3 className="font-bold text-gray-800 mb-3">Upcoming Events</h3>
+          <div className="space-y-3">
+            {events.map((ev, i) => {
+              const d = new Date(ev.event_date);
+              return (
+                <div key={i} className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
+                    style={{ backgroundColor: user.church.primaryColor }}>
+                    <span className="text-lg font-bold leading-none">{d.getDate()}</span>
+                    <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-gray-800 text-sm">{ev.title}</p>
+                    <p className="text-gray-500 text-xs">{ev.location || d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Sunday Screen ──────────────────────────────────────────────────────────
 function SundayScreen({ user }: { user: User }) {
+  const [tab, setTab] = useState('notes');
   const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [submitted, setSubmitted] = useState(false);
+  const [shared, setShared] = useState<any[]>([]);
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('sermon_notes')
+        .select('*, profiles(full_name, avatar_url)')
+        .eq('church_id', user.church.id).eq('shared', true)
+        .order('created_at', { ascending: false }).limit(10);
+      if (data) setShared(data);
+    })();
+  }, [user.church.id]);
 
   const notes = [
-    { type: 'blank', label: 'The Holy Spirit was given to us as our ___', answer: 'Comforter' },
-    { type: 'blank', label: 'We are called to walk in the ___ not in the flesh', answer: 'Spirit' },
-    { type: 'reflection', label: 'What is one area of your life where you need to surrender to the Spirit today?' },
-    { type: 'blank', label: 'The fruit of the Spirit is ___, joy, peace...', answer: 'Love' },
-    { type: 'reflection', label: 'How will you apply today\'s message this week?' },
+    { type: 'blank', label: 'The Holy Spirit was given to us as our ___' },
+    { type: 'blank', label: 'We are called to walk in the ___ not in the flesh' },
+    { type: 'reflection', label: 'What is one area where you need to surrender to the Spirit today?' },
+    { type: 'blank', label: 'The fruit of the Spirit is ___, joy, peace...' },
+    { type: 'reflection', label: "How will you apply today's message this week?" },
+  ];
+
+  async function submitNotes() {
+    await supabase.from('sermon_notes').insert({
+      church_id: user.church.id, member_id: user.id, answers, shared: false, points_awarded: 50,
+    });
+    await supabase.from('profiles').update({ points: user.points + 50 }).eq('id', user.id);
+    setSubmitted(true);
+  }
+
+  const tabs = ['notes', 'community', ...(isAdmin ? ['ai assistant'] : [])];
+
+  return (
+    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      <div className="flex gap-2">
+        {tabs.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-1 py-2 rounded-xl text-sm font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'notes' && (
+        <div className="space-y-4">
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
+              style={{ backgroundColor: user.church.primaryColor }}>SERIES</span>
+            <h2 className="text-xl font-bold text-gray-800 mt-2">Life in the Spirit</h2>
+            <p className="text-gray-500 text-sm">Galatians 5:16-25</p>
+          </div>
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <div className="rounded-xl p-3 mb-4 border-l-4"
+              style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
+              <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
+              <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." — Galatians 5:16</p>
+            </div>
+            {submitted ? (
+              <div className="text-center py-6">
+                <p className="text-3xl mb-2">🎉</p>
+                <p className="font-bold text-gray-800">Notes submitted! +50 points earned</p>
+              </div>
+            ) : (
+              <>
+                {notes.map((n, i) => (
+                  <div key={i} className="mb-4">
+                    <p className="text-sm text-gray-700 mb-1">{n.label}</p>
+                    {n.type === 'blank' ? (
+                      <input type="text" placeholder="Your answer..." value={answers[i] || ''}
+                        onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                    ) : (
+                      <textarea placeholder="Your reflection..." value={answers[i] || ''}
+                        onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+                    )}
+                  </div>
+                ))}
+                <button onClick={submitNotes}
+                  className="w-full py-3 rounded-xl text-white font-bold"
+                  style={{ backgroundColor: user.church.primaryColor }}>
+                  Submit Notes (+50 points)
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'community' && (
+        <div className="space-y-3">
+          {shared.length === 0 ? (
+            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+              <p className="text-gray-400 text-sm">No shared notes yet.</p>
+            </div>
+          ) : (
+            shared.map((note, i) => (
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <Avatar url={note.profiles?.avatar_url} name={note.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
+                  <p className="font-semibold text-gray-800 text-sm">{note.profiles?.full_name || 'Anonymous'}</p>
+                </div>
+                {note.answers && Object.values(note.answers).map((a: any, j: number) =>
+                  a && <p key={j} className="text-gray-600 text-sm mt-1">"{a}"</p>
+                )}
+                {isAdmin && (
+                  <button onClick={async () => {
+                    await supabase.from('sermon_notes').update({ shared: false }).eq('id', note.id);
+                    setShared(shared.filter(n => n.id !== note.id));
+                  }} className="mt-2 text-xs text-red-400">Remove</button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+
+      {tab === 'ai assistant' && isAdmin && <AISermonAssistant user={user} />}
+    </div>
+  );
+}
+
+// ── AI Sermon Assistant ────────────────────────────────────────────────────
+function AISermonAssistant({ user }: { user: User }) {
+  const [step, setStep] = useState<'theology' | 'input' | 'draft'>('theology');
+  const [theology, setTheology] = useState<TheologySettings>({
+    denomination: '', statement_of_faith: '', bible_translation: 'NIV',
+    worship_style: '', theological_positions: '', restricted_topics: '',
+  });
+  const [outline, setOutline] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [draft, setDraft] = useState<SermonDraft | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('theology_settings')
+        .select('*').eq('church_id', user.church.id).maybeSingle();
+      if (data) { setTheology(data); setStep('input'); }
+    })();
+  }, [user.church.id]);
+
+  async function saveTheology() {
+    await supabase.from('theology_settings').upsert(
+      { church_id: user.church.id, ...theology, updated_at: new Date().toISOString() },
+      { onConflict: 'church_id' }
+    );
+    setStep('input');
+  }
+
+  async function generate() {
+    if (!outline.trim()) { alert('Please enter your sermon outline'); return; }
+    setGenerating(true);
+    const sys = `You are a ministry content assistant for a church with the following profile:
+Denomination: ${theology.denomination || 'Non-denominational'}
+Bible Translation: ${theology.bible_translation}
+Worship Style: ${theology.worship_style || 'Contemporary'}
+Statement of Faith: ${theology.statement_of_faith || 'Standard evangelical'}
+Theological Positions: ${theology.theological_positions || 'Standard evangelical'}
+NEVER generate content about: ${theology.restricted_topics || 'none specified'}
+Respond ONLY with valid JSON matching this exact structure, no other text:
+{"devotionals":[{"day":"Monday","title":"","scripture":"","body":"","reflection":""},{"day":"Tuesday","title":"","scripture":"","body":"","reflection":""},{"day":"Wednesday","title":"","scripture":"","body":"","reflection":""},{"day":"Thursday","title":"","scripture":"","body":"","reflection":""},{"day":"Friday","title":"","scripture":"","body":"","reflection":""}],"small_group_questions":["","","","",""],"challenge":{"title":"","type":"Streak","description":"","duration_days":7},"prayer_prompt":"","announcement":"","social_captions":{"short":"","medium":"","long":""}}`;
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.REACT_APP_ANTHROPIC_KEY!,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          system: sys,
+          messages: [{ role: 'user', content: `Generate ministry content for this sermon:\n\n${outline}` }],
+        }),
+      });
+      const raw = await res.json();
+      const text = raw.content?.[0]?.text || '';
+      const match = text.match(/\{[\s\S]*\}/);
+      if (match) {
+        const p = JSON.parse(match[0]);
+        const nd: SermonDraft = {
+          sermon_outline: outline,
+          generated_devotionals: p.devotionals,
+          generated_questions: p.small_group_questions,
+          generated_challenge: p.challenge,
+          generated_prayer: p.prayer_prompt,
+          generated_announcement: p.announcement,
+          generated_social: p.social_captions,
+          admin_notes: '',
+          status: 'draft',
+        };
+        const { data: saved } = await supabase.from('sermon_drafts')
+          .insert({ church_id: user.church.id, created_by: user.id, ...nd })
+          .select().single();
+        setDraft({ ...nd, id: saved?.id });
+        setStep('draft');
+      } else {
+        alert('Could not parse content. Please try again.');
+      }
+    } catch {
+      alert('Generation failed. Check your connection and try again.');
+    }
+    setGenerating(false);
+  }
+
+  async function updateField(field: string, value: any) {
+    if (!draft?.id) return;
+    await supabase.from('sermon_drafts').update({ [field]: value }).eq('id', draft.id);
+    setDraft(prev => prev ? { ...prev, [field]: value } : null);
+  }
+
+  async function publish() {
+    if (!draft?.id) return;
+    await supabase.from('sermon_drafts').update({ status: 'published' }).eq('id', draft.id);
+    if (draft.generated_devotionals) {
+      for (const d of draft.generated_devotionals) {
+        await supabase.from('devotionals').insert({
+          church_id: user.church.id, author_id: user.id,
+          title: d.title, scripture: d.scripture, body: d.body, day_of_week: d.day,
+        });
+      }
+    }
+    alert('Content published!');
+    setStep('input'); setDraft(null); setOutline('');
+  }
+
+  const theologyFields = [
+    { label: 'Denomination', key: 'denomination', ph: 'e.g. Pentecostal, Baptist, Non-denominational', ta: false },
+    { label: 'Bible Translation', key: 'bible_translation', ph: 'e.g. NIV, KJV, ESV, NKJV', ta: false },
+    { label: 'Worship Style', key: 'worship_style', ph: 'e.g. Contemporary, Traditional, Blended', ta: false },
+    { label: 'Statement of Faith', key: 'statement_of_faith', ph: 'Brief summary of your core beliefs...', ta: true },
+    { label: 'Key Theological Positions', key: 'theological_positions', ph: 'Doctrinal positions the AI should reflect...', ta: true },
+    { label: 'Topics to Never Include', key: 'restricted_topics', ph: 'Topics or positions the AI should avoid...', ta: true },
   ];
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div className="flex items-center gap-2 mb-1">
-          <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
-            style={{ backgroundColor: user.church.primaryColor }}>SERIES</span>
-          <span className="text-xs text-gray-500">Walking in the Spirit</span>
-        </div>
-        <h2 className="text-xl font-bold text-gray-800">Life in the Spirit</h2>
-        <p className="text-gray-500 text-sm">Galatians 5:16-25  |  Pastor Charles Simmons</p>
-      </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <div className="bg-purple-50 border-l-4 p-3 rounded-r-lg mb-4"
-          style={{ borderColor: user.church.primaryColor }}>
-          <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
-          <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." - Galatians 5:16</p>
-        </div>
-        <h3 className="font-bold text-gray-800 mb-3">Sermon Notes</h3>
-        <div className="space-y-4">
-          {notes.map((note, i) => (
+    <div className="space-y-4">
+      {step === 'theology' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <h3 className="font-bold text-gray-800 text-lg">Theology Settings</h3>
+          <p className="text-gray-500 text-sm">Configure your church doctrine so all AI content aligns with your beliefs.</p>
+          {theologyFields.map((f, i) => (
             <div key={i}>
-              {note.type === 'blank' ? (
-                <div>
-                  <p className="text-sm text-gray-700 mb-1">{note.label}</p>
-                  <input
-                    type="text"
-                    placeholder="Type your answer..."
-                    value={answers[i] || ''}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setAnswers({ ...answers, [i]: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400"
-                  />
-                </div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.label}</label>
+              {f.ta ? (
+                <textarea placeholder={f.ph} value={(theology as any)[f.key]}
+                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
               ) : (
-                <div>
-                  <p className="text-sm text-gray-700 mb-1">{note.label}</p>
-                  <textarea
-                    placeholder="Write your reflection..."
-                    value={answers[i] || ''}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setAnswers({ ...answers, [i]: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-400 h-20 resize-none"
-                  />
-                </div>
+                <input type="text" placeholder={f.ph} value={(theology as any)[f.key]}
+                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
               )}
             </div>
           ))}
+          <button onClick={saveTheology}
+            className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Save and Continue
+          </button>
         </div>
-        <button className="w-full mt-4 py-3 rounded-lg text-white font-bold"
-          style={{ backgroundColor: user.church.primaryColor }}>
-          Submit Notes (+50 points)
-        </button>
-      </div>
+      )}
+
+      {step === 'input' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-gray-800 text-lg">AI Sermon Assistant</h3>
+            <button onClick={() => setStep('theology')}
+              className="text-xs px-3 py-1 rounded-full border"
+              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+              Edit Theology
+            </button>
+          </div>
+          <textarea
+            placeholder="Paste your sermon title, scripture, main points, illustrations, and notes here..."
+            value={outline} onChange={e => setOutline(e.target.value)}
+            className="w-full px-3 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none resize-none h-40" />
+          <div className="rounded-xl p-3" style={{ backgroundColor: '#F5F0FF' }}>
+            <p className="text-xs font-semibold mb-2" style={{ color: user.church.primaryColor }}>Will generate:</p>
+            <div className="grid grid-cols-2 gap-1">
+              {['5 Daily Devotionals','Small Group Questions','Weekly Challenge','Prayer Prompt','Announcement','3 Social Captions'].map((x, i) => (
+                <p key={i} className="text-xs text-gray-600">✓ {x}</p>
+              ))}
+            </div>
+          </div>
+          <button onClick={generate} disabled={generating}
+            className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor, opacity: generating ? 0.7 : 1 }}>
+            {generating ? 'Generating...' : 'Generate Content'}
+          </button>
+        </div>
+      )}
+
+      {step === 'draft' && draft && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-gray-800">Generated Content</h3>
+            <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">Draft</span>
+          </div>
+          <p className="text-gray-500 text-xs">Review and edit before publishing. Nothing goes live until you click Publish.</p>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Daily Devotionals</p>
+            {(draft.generated_devotionals || []).map((dv: any, i: number) => (
+              <div key={i} className="mb-3 p-3 rounded-xl border border-gray-100">
+                <p className="text-xs font-bold mb-1" style={{ color: user.church.primaryColor }}>{dv.day}</p>
+                <input type="text" value={dv.title || ''}
+                  onChange={e => {
+                    const u = [...(draft.generated_devotionals || [])];
+                    u[i] = { ...u[i], title: e.target.value };
+                    updateField('generated_devotionals', u);
+                  }}
+                  className="w-full font-semibold text-gray-800 text-sm border-0 focus:outline-none" />
+                <textarea value={dv.body || ''}
+                  onChange={e => {
+                    const u = [...(draft.generated_devotionals || [])];
+                    u[i] = { ...u[i], body: e.target.value };
+                    updateField('generated_devotionals', u);
+                  }}
+                  className="w-full text-gray-600 text-xs border-0 focus:outline-none resize-none h-16 mt-1" />
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Small Group Questions</p>
+            {(draft.generated_questions || []).map((q: string, i: number) => (
+              <div key={i} className="flex gap-2 mb-2">
+                <span className="text-xs text-gray-400 mt-2 flex-shrink-0">{i + 1}.</span>
+                <input type="text" value={q}
+                  onChange={e => {
+                    const u = [...(draft.generated_questions || [])];
+                    u[i] = e.target.value;
+                    updateField('generated_questions', u);
+                  }}
+                  className="flex-1 text-sm text-gray-700 border-b border-gray-200 focus:outline-none pb-1" />
+              </div>
+            ))}
+            <button onClick={() => updateField('generated_questions', [...(draft.generated_questions || []), 'New question'])}
+              className="text-xs mt-1" style={{ color: user.church.primaryColor }}>+ Add question</button>
+          </div>
+
+          {draft.generated_social && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social Captions</p>
+              {Object.entries(draft.generated_social).map(([key, val]) => (
+                <div key={key} className="mb-2">
+                  <p className="text-xs text-gray-400 capitalize mb-1">{key}:</p>
+                  <textarea value={val as string}
+                    onChange={e => updateField('generated_social', { ...draft.generated_social, [key]: e.target.value })}
+                    className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Prayer Prompt</p>
+            <textarea value={draft.generated_prayer || ''}
+              onChange={e => updateField('generated_prayer', e.target.value)}
+              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Announcement</p>
+            <textarea value={draft.generated_announcement || ''}
+              onChange={e => updateField('generated_announcement', e.target.value)}
+              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+          </div>
+
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Personal Notes</p>
+            <textarea placeholder="Add notes, reminders, or additional context..."
+              value={draft.admin_notes || ''}
+              onChange={e => updateField('admin_notes', e.target.value)}
+              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-20" />
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => { setStep('input'); setDraft(null); }}
+              className="flex-1 py-3 rounded-xl font-bold border"
+              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+              Discard
+            </button>
+            <button onClick={publish}
+              className="flex-1 py-3 rounded-xl font-bold text-white"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Publish All
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Community Screen ───────────────────────────────────────────────────────
 function CommunityScreen({ user }: { user: User }) {
-  const [activeTab, setActiveTab] = useState('prayer');
+  const [tab, setTab] = useState('prayer');
+  const [prayers, setPrayers] = useState<any[]>([]);
+  const [challenges, setChallenges] = useState<any[]>([]);
+  const [devotionals, setDevotionals] = useState<any[]>([]);
+  const [msgs, setMsgs] = useState<Message[]>([]);
   const [prayerText, setPrayerText] = useState('');
+  const [chatText, setChatText] = useState('');
+  const [isPrivate, setIsPrivate] = useState(false);
+  const endRef = useRef<HTMLDivElement>(null);
 
-  const prayers = [
-    { name: 'Sister Angela M.', text: 'Please pray for my mother\'s healing. She goes in for surgery on Thursday.', count: 24, time: '2 hours ago' },
-    { name: 'Brother David K.', text: 'Believing God for a breakthrough in my finances this month.', count: 18, time: '4 hours ago' },
-    { name: 'Minister Tanya R.', text: 'Pray for the youth ministry as we prepare for summer camp.', count: 31, time: '6 hours ago' },
-  ];
+  async function load() {
+    const { data: pr } = await supabase.from('prayer_requests')
+      .select('*, profiles(full_name, avatar_url)')
+      .eq('church_id', user.church.id).eq('is_private', false).eq('is_answered', false)
+      .order('created_at', { ascending: false }).limit(10);
+    if (pr) setPrayers(pr);
 
-  const challenges = [
-    { title: '7-Day Prayer Fast', type: 'Streak', day: 3, total: 7, participants: 42, points: 200 },
-    { title: 'Memorize Psalm 23', type: 'Achievement', deadline: 'Jun 15', participants: 28, points: 150 },
-    { title: 'Church Outreach Drive', type: 'Community', goal: '100 meals', progress: 67, participants: 89, points: 100 },
-  ];
+    const { data: ch } = await supabase.from('challenges').select('*')
+      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(5);
+    if (ch) setChallenges(ch);
+
+    const { data: dv } = await supabase.from('devotionals').select('*')
+      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(5);
+    if (dv) setDevotionals(dv);
+
+    const { data: cm } = await supabase.from('chat_messages')
+      .select('*, profiles(full_name, avatar_url)')
+      .eq('church_id', user.church.id).is('group_id', null).eq('is_deleted', false)
+      .order('created_at', { ascending: true }).limit(50);
+    if (cm) setMsgs(cm.map((m: any) => ({
+      id: m.id, content: m.content, author_id: m.author_id,
+      author_name: m.profiles?.full_name || 'Member',
+      author_avatar: m.profiles?.avatar_url,
+      created_at: m.created_at, group_id: null,
+    })));
+  }
+
+  useEffect(() => {
+    load();
+    const channel = supabase.channel('community-chat')
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'chat_messages',
+        filter: `church_id=eq.${user.church.id}`,
+      }, (payload: any) => {
+        setMsgs(prev => [...prev, {
+          id: payload.new.id, content: payload.new.content,
+          author_id: payload.new.author_id, author_name: 'Member',
+          created_at: payload.new.created_at, group_id: null,
+        }]);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user.church.id]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
+
+  async function postPrayer() {
+    if (!prayerText.trim()) return;
+    await supabase.from('prayer_requests').insert({
+      church_id: user.church.id, author_id: user.id,
+      body: prayerText, is_private: isPrivate,
+    });
+    setPrayerText(''); load();
+  }
+
+  async function sendChat() {
+    if (!chatText.trim()) return;
+    await supabase.from('chat_messages').insert({
+      church_id: user.church.id, author_id: user.id, content: chatText, group_id: null,
+    });
+    setChatText('');
+  }
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex gap-2">
-        {['prayer', 'challenges', 'devotional'].map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            className="flex-1 py-2 rounded-lg text-sm font-semibold capitalize transition-all"
-            style={{
-              backgroundColor: activeTab === tab ? user.church.primaryColor : '#F3F4F6',
-              color: activeTab === tab ? 'white' : '#6B7280'
-            }}>
-            {tab}
+    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {['prayer', 'challenges', 'devotional', 'chat'].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
           </button>
         ))}
       </div>
-      {activeTab === 'prayer' && (
+
+      {tab === 'prayer' && (
         <div className="space-y-3">
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <textarea
-              placeholder="Share a prayer request with your church..."
-              value={prayerText}
-              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setPrayerText(e.target.value)}
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-lg px-3 py-2 h-20 resize-none focus:outline-none focus:border-purple-400"
-            />
-            <button className="mt-2 px-4 py-2 rounded-lg text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              Post Prayer Request
-            </button>
+          <div className="bg-white rounded-2xl p-4 shadow-sm">
+            <textarea placeholder="Share a prayer request with your church..."
+              value={prayerText} onChange={e => setPrayerText(e.target.value)}
+              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl px-3 py-2 h-20 resize-none focus:outline-none" />
+            <div className="flex items-center justify-between mt-2">
+              <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+                <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="rounded" />
+                Private (admin only)
+              </label>
+              <button onClick={postPrayer}
+                className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
+                style={{ backgroundColor: user.church.primaryColor }}>Post</button>
+            </div>
           </div>
           {prayers.map((p, i) => (
-            <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-              <div className="flex justify-between items-start mb-2">
-                <p className="font-semibold text-gray-800 text-sm">{p.name}</p>
-                <p className="text-xs text-gray-400">{p.time}</p>
+            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
+                <div>
+                  <p className="font-semibold text-gray-800 text-sm">{p.profiles?.full_name || 'Anonymous'}</p>
+                  <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+                </div>
               </div>
-              <p className="text-gray-600 text-sm mb-3">{p.text}</p>
-              <button className="flex items-center gap-2 text-sm font-semibold"
-                style={{ color: user.church.primaryColor }}>
-                🙏 Pray ({p.count})
-              </button>
+              <p className="text-gray-600 text-sm mb-3">{p.body}</p>
+              <div className="flex gap-3">
+                <button onClick={async () => {
+                  await supabase.from('prayer_requests').update({ pray_count: (p.pray_count || 0) + 1 }).eq('id', p.id);
+                  load();
+                }} className="text-sm font-semibold" style={{ color: user.church.primaryColor }}>
+                  🙏 Pray ({p.pray_count || 0})
+                </button>
+                {(user.id === p.author_id || user.role === 'super_admin' || user.role === 'admin') && (
+                  <button onClick={async () => {
+                    await supabase.from('prayer_requests').update({ is_answered: true }).eq('id', p.id);
+                    load();
+                  }} className="text-sm text-green-600 font-semibold">✓ Answered</button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
-      {activeTab === 'challenges' && (
+
+      {tab === 'challenges' && (
         <div className="space-y-3">
-          {challenges.map((c, i) => (
-            <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
+          {challenges.length === 0 ? (
+            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+              <p className="text-gray-400 text-sm">No active challenges yet.</p>
+            </div>
+          ) : challenges.map((c, i) => (
+            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="font-bold text-gray-800">{c.title}</h3>
-                <span className="text-xs px-2 py-1 rounded-full text-white"
-                  style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
+                <span className="text-xs px-2 py-1 rounded-full text-white" style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
               </div>
-              <p className="text-xs text-gray-500 mb-3">{c.participants} participants  |  {c.points} points</p>
-              {c.type === 'Streak' && (
-                <div className="flex gap-1">
-                  {Array.from({ length: c.total ?? 0 }).map((_, d) => (
+              <p className="text-xs text-gray-500 mb-3">{c.points} points</p>
+              {c.type === 'Streak' && c.total_days && (
+                <div className="flex gap-1 mb-3">
+                  {Array.from({ length: c.total_days as number }).map((_, d) => (
                     <div key={d} className="flex-1 h-2 rounded-full"
-                      style={{ backgroundColor: d < (c.day ?? 0) ? user.church.primaryColor : '#E5E7EB' }} />
+                      style={{ backgroundColor: d < 3 ? user.church.primaryColor : '#E5E7EB' }} />
                   ))}
                 </div>
               )}
-              {c.type === 'Community' && (
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div className="h-2 rounded-full"
-                    style={{ width: `${c.progress}%`, backgroundColor: user.church.primaryColor }} />
-                </div>
-              )}
-              <button className="mt-3 w-full py-2 rounded-lg text-white text-sm font-semibold"
+              <button onClick={async () => {
+                await supabase.from('challenge_participants').insert({ challenge_id: c.id, member_id: user.id });
+                alert('You joined the challenge!');
+              }} className="w-full py-2 rounded-xl text-white text-sm font-semibold"
                 style={{ backgroundColor: user.church.primaryColor }}>
                 Join Challenge
               </button>
@@ -510,31 +987,67 @@ function CommunityScreen({ user }: { user: User }) {
           ))}
         </div>
       )}
-      {activeTab === 'devotional' && (
-        <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 space-y-3">
-          <div className="flex gap-2 overflow-x-auto">
-            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((day, i) => (
-              <button key={i} className="flex-shrink-0 px-3 py-1 rounded-full text-sm font-semibold"
-                style={{ backgroundColor: i === 2 ? user.church.primaryColor : '#F3F4F6',
-                  color: i === 2 ? 'white' : '#6B7280' }}>
-                {day}
+
+      {tab === 'devotional' && (
+        <div className="space-y-3">
+          {devotionals.length === 0 ? (
+            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+              <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
+            </div>
+          ) : devotionals.map((dv, i) => (
+            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs px-2 py-1 rounded-full text-white font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>{dv.day_of_week}</span>
+                <p className="text-xs text-gray-500">{dv.scripture}</p>
+              </div>
+              <h3 className="font-bold text-gray-800 mb-2">{dv.title}</h3>
+              <p className="text-gray-600 text-sm leading-relaxed">{dv.body}</p>
+              <button onClick={async () => {
+                await supabase.from('profiles').update({ points: user.points + 20 }).eq('id', user.id);
+                alert('+20 points earned!');
+              }} className="mt-3 w-full py-2 rounded-xl text-white text-sm font-semibold"
+                style={{ backgroundColor: user.church.primaryColor }}>
+                Mark as Read (+20 pts)
               </button>
-            ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'chat' && (
+        <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '60vh' }}>
+          <div className="p-3 border-b border-gray-100">
+            <h3 className="font-bold text-gray-800 text-sm">Church Chat</h3>
+            <p className="text-xs text-gray-400">All members</p>
           </div>
-          <h3 className="font-bold text-gray-800">Surrendered to the Spirit</h3>
-          <p className="text-xs text-gray-500">Galatians 5:22-23</p>
-          <p className="text-sm text-gray-700 leading-relaxed">
-            The fruit of the Spirit is not something we manufacture in our own strength. It is the natural overflow of a life surrendered to the Holy Spirit. Today, ask yourself: where are you striving in your own strength instead of yielding to God?
-          </p>
-          <div className="bg-purple-50 p-3 rounded-lg"
-            style={{ borderLeft: `4px solid ${user.church.primaryColor}` }}>
-            <p className="text-xs font-semibold text-gray-500 mb-1">REFLECTION</p>
-            <p className="text-sm text-gray-700">What would it look like to fully surrender one area of your life to God today?</p>
+          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            {msgs.map((m, i) => {
+              const own = m.author_id === user.id;
+              return (
+                <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
+                  {!own && <Avatar url={m.author_avatar} name={m.author_name} size={28} color={user.church.primaryColor} />}
+                  <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+                    {!own && <p className="text-xs text-gray-400 mb-1">{m.author_name}</p>}
+                    <div className="px-3 py-2 rounded-2xl text-sm"
+                      style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
+                      {m.content}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            <div ref={endRef} />
           </div>
-          <button className="w-full py-2 rounded-lg text-white text-sm font-semibold"
-            style={{ backgroundColor: user.church.primaryColor }}>
-            Mark as Read (+20 points)
-          </button>
+          <div className="p-3 border-t border-gray-100 flex gap-2">
+            <input type="text" placeholder="Type a message..." value={chatText}
+              onChange={e => setChatText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+              className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <button onClick={sendChat}
+              className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+          </div>
         </div>
       )}
     </div>
@@ -543,61 +1056,1049 @@ function CommunityScreen({ user }: { user: User }) {
 
 // ── Groups Screen ──────────────────────────────────────────────────────────
 function GroupsScreen({ user }: { user: User }) {
-  const groups = [
-    { name: 'Men of Valor', members: 18, leader: 'Deacon James T.', lastActive: '2 hours ago' },
-    { name: 'Women of Purpose', members: 24, leader: 'Minister Sandra L.', lastActive: '1 hour ago' },
-    { name: 'Young Adults Ministry', members: 31, leader: 'Minister Tanya R.', lastActive: '30 min ago' },
-    { name: 'Intercessory Prayer Team', members: 12, leader: 'Elder Grace M.', lastActive: '3 hours ago' },
-  ];
+  const [tab, setTab] = useState('groups');
+  const [groups, setGroups] = useState<any[]>([]);
+  const [board, setBoard] = useState<any[]>([]);
+  const [selGroup, setSelGroup] = useState<any>(null);
+  const [gMsgs, setGMsgs] = useState<Message[]>([]);
+  const [chatText, setChatText] = useState('');
+  const endRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { data: g } = await supabase.from('groups')
+        .select('*, profiles(full_name)')
+        .eq('church_id', user.church.id).order('created_at', { ascending: false });
+      if (g) setGroups(g);
+      const { data: lb } = await supabase.from('profiles')
+        .select('id, full_name, avatar_url, points, streak')
+        .eq('church_id', user.church.id).order('points', { ascending: false }).limit(10);
+      if (lb) setBoard(lb);
+    })();
+  }, [user.church.id]);
+
+  useEffect(() => {
+    if (!selGroup) return;
+    (async () => {
+      const { data } = await supabase.from('chat_messages')
+        .select('*, profiles(full_name, avatar_url)')
+        .eq('group_id', selGroup.id).eq('is_deleted', false)
+        .order('created_at', { ascending: true }).limit(50);
+      if (data) setGMsgs(data.map((m: any) => ({
+        id: m.id, content: m.content, author_id: m.author_id,
+        author_name: m.profiles?.full_name || 'Member',
+        author_avatar: m.profiles?.avatar_url,
+        created_at: m.created_at, group_id: m.group_id,
+      })));
+    })();
+    const channel = supabase.channel(`group-${selGroup.id}`)
+      .on('postgres_changes', {
+        event: 'INSERT', schema: 'public', table: 'chat_messages',
+        filter: `group_id=eq.${selGroup.id}`,
+      }, (payload: any) => {
+        setGMsgs(prev => [...prev, {
+          id: payload.new.id, content: payload.new.content,
+          author_id: payload.new.author_id, author_name: 'Member',
+          created_at: payload.new.created_at, group_id: payload.new.group_id,
+        }]);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [selGroup]);
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gMsgs]);
+
+  async function sendMsg() {
+    if (!chatText.trim() || !selGroup) return;
+    await supabase.from('chat_messages').insert({
+      church_id: user.church.id, group_id: selGroup.id,
+      author_id: user.id, content: chatText,
+    });
+    setChatText('');
+  }
+
+  if (selGroup) return (
+    <div className="p-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '70vh' }}>
+        <div className="p-3 border-b border-gray-100 flex items-center gap-2">
+          <button onClick={() => setSelGroup(null)} className="text-gray-400 text-lg">‹</button>
+          <div>
+            <h3 className="font-bold text-gray-800 text-sm">{selGroup.name}</h3>
+            <p className="text-xs text-gray-400">Group Chat</p>
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {gMsgs.map((m, i) => {
+            const own = m.author_id === user.id;
+            return (
+              <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
+                {!own && <Avatar url={m.author_avatar} name={m.author_name} size={28} color={user.church.primaryColor} />}
+                <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+                  {!own && <p className="text-xs text-gray-400 mb-1">{m.author_name}</p>}
+                  <div className="px-3 py-2 rounded-2xl text-sm"
+                    style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
+                    {m.content}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={endRef} />
+        </div>
+        <div className="p-3 border-t border-gray-100 flex gap-2">
+          <input type="text" placeholder="Type a message..." value={chatText}
+            onChange={e => setChatText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') sendMsg(); }}
+            className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <button onClick={sendMsg}
+            className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
+            style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">My Groups</h3>
+    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      <div className="flex gap-2">
+        {['groups', 'leaderboard'].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-1 py-2 rounded-xl text-sm font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'groups' && (
         <div className="space-y-3">
-          {groups.map((g, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+          {groups.length === 0 ? (
+            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+              <p className="text-gray-400 text-sm">No groups yet.</p>
+            </div>
+          ) : groups.map((g, i) => (
+            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
                   style={{ backgroundColor: user.church.primaryColor }}>
                   {g.name.charAt(0)}
                 </div>
                 <div>
                   <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
-                  <p className="text-xs text-gray-500">{g.members} members  |  {g.leader}</p>
+                  <p className="text-xs text-gray-500">Leader: {g.profiles?.full_name || 'TBD'}</p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-gray-400">{g.lastActive}</p>
-                <span className="text-xs px-2 py-1 rounded-full bg-green-100 text-green-700">Active</span>
+              <button onClick={() => setSelGroup(g)}
+                className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
+                style={{ backgroundColor: user.church.primaryColor }}>Chat</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'leaderboard' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <h3 className="font-bold text-gray-800 mb-4">Points Leaderboard</h3>
+          <div className="space-y-3">
+            {board.map((m, i) => (
+              <div key={i} className="flex items-center gap-3 p-2 rounded-xl"
+                style={{ backgroundColor: m.id === user.id ? '#F5F0FF' : 'transparent' }}>
+                <span className="w-7 text-center font-bold">
+                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
+                </span>
+                <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={36} color={user.church.primaryColor} />
+                <div className="flex-1">
+                  <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Member'}</p>
+                  <p className="text-xs text-gray-500">{m.streak || 0} day streak 🔥</p>
+                </div>
+                <p className="font-bold text-sm" style={{ color: user.church.primaryColor }}>
+                  {(m.points || 0).toLocaleString()} pts
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── More Screen ────────────────────────────────────────────────────────────
+function MoreScreen({ user }: { user: User }) {
+  const [sub, setSub] = useState('menu');
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const back = () => setSub('menu');
+
+  const items = [
+    { icon: '💳', label: 'Give', tab: 'giving' },
+    { icon: '📅', label: 'Events', tab: 'events' },
+    { icon: '🏢', label: 'Business Directory', tab: 'biz' },
+    { icon: '👤', label: 'Member Directory', tab: 'members' },
+    { icon: '📣', label: 'Announcements', tab: 'ann' },
+    { icon: '📍', label: 'Check In', tab: 'checkin' },
+    { icon: '👶', label: "Children's Check-In", tab: 'children' },
+    { icon: '⚙️', label: 'My Profile', tab: 'profile' },
+    ...(isAdmin ? [
+      { icon: '🔧', label: 'Admin Panel', tab: 'admin' },
+      { icon: '💰', label: 'Pricing', tab: 'pricing' },
+    ] : []),
+  ];
+
+  return (
+    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+      {sub === 'menu' && (
+        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+          <div className="p-4" style={{ background: `linear-gradient(135deg, ${user.church.primaryColor}, ${BRAND.plum})` }}>
+            <div className="flex items-center gap-3">
+              <Avatar url={user.avatarUrl} name={user.name || user.email} size={48} />
+              <div>
+                <p className="font-bold text-white">{user.name || user.email}</p>
+                <p className="text-xs text-white/70">{user.church.name}</p>
+              </div>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {items.map((item, i) => (
+              <button key={i} onClick={() => setSub(item.tab)}
+                className="w-full flex items-center gap-3 p-4 hover:bg-gray-50 text-left">
+                <span className="text-xl w-8">{item.icon}</span>
+                <span className="font-medium text-gray-700">{item.label}</span>
+                <span className="ml-auto text-gray-400">›</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {sub === 'giving' && <GivingScreen user={user} onBack={back} />}
+      {sub === 'events' && <EventsScreen user={user} onBack={back} />}
+      {sub === 'biz' && <BusinessDirectoryScreen user={user} onBack={back} />}
+      {sub === 'members' && <MemberDirectoryScreen user={user} onBack={back} />}
+      {sub === 'ann' && <AnnouncementsScreen user={user} onBack={back} />}
+      {sub === 'checkin' && <CheckInScreen user={user} onBack={back} />}
+      {sub === 'children' && <ChildrenCheckInScreen user={user} onBack={back} />}
+      {sub === 'profile' && <ProfileScreen user={user} onBack={back} />}
+      {sub === 'admin' && <AdminScreen user={user} onBack={back} />}
+      {sub === 'pricing' && <PricingScreen user={user} onBack={back} />}
+    </div>
+  );
+}
+
+// ── Giving Screen ──────────────────────────────────────────────────────────
+function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [tab, setTab] = useState('give');
+  const [funds, setFunds] = useState<GivingFund[]>([]);
+  const [sel, setSel] = useState('');
+  const [amount, setAmount] = useState('');
+  const [txns, setTxns] = useState<any[]>([]);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  async function loadFunds() {
+    const { data } = await supabase.from('giving_funds').select('*')
+      .eq('church_id', user.church.id).eq('is_active', true)
+      .order('is_default', { ascending: false });
+    if (data) {
+      setFunds(data);
+      const def = data.find((f: GivingFund) => f.is_default);
+      if (def) setSel(def.id);
+    }
+  }
+
+  async function loadTxns() {
+    const { data } = await supabase.from('giving_transactions')
+      .select('*, giving_funds(name)').eq('member_id', user.id)
+      .order('created_at', { ascending: false }).limit(10);
+    if (data) setTxns(data);
+  }
+
+  useEffect(() => { loadFunds(); loadTxns(); }, [user.church.id]);
+
+  async function addFund() {
+    if (!newName.trim()) return;
+    await supabase.from('giving_funds').insert({
+      church_id: user.church.id, name: newName,
+      description: newDesc, is_active: true, is_default: false,
+    });
+    setNewName(''); setNewDesc(''); setAddOpen(false); loadFunds();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Give</h2>
+      </div>
+      <div className="flex gap-2">
+        {['give', 'history', ...(isAdmin ? ['manage funds'] : [])].map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-1 py-2 rounded-xl text-xs font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'give' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <p className="text-sm font-semibold text-gray-700">Select Fund</p>
+          <div className="space-y-2">
+            {funds.map(f => (
+              <button key={f.id} onClick={() => setSel(f.id)}
+                className="w-full p-3 rounded-xl border-2 text-left"
+                style={{ borderColor: sel === f.id ? user.church.primaryColor : '#E5E7EB', backgroundColor: sel === f.id ? '#F5F0FF' : BRAND.white }}>
+                <p className="font-semibold text-gray-800 text-sm">{f.name}</p>
+                {f.description && <p className="text-xs text-gray-500">{f.description}</p>}
+              </button>
+            ))}
+          </div>
+          <p className="text-sm font-semibold text-gray-700">Amount</p>
+          <div className="flex gap-2 flex-wrap">
+            {[25, 50, 100, 250, 500].map(a => (
+              <button key={a} onClick={() => setAmount(String(a))}
+                className="px-3 py-2 rounded-xl text-sm font-semibold border-2"
+                style={{
+                  borderColor: amount === String(a) ? user.church.primaryColor : '#E5E7EB',
+                  backgroundColor: amount === String(a) ? '#F5F0FF' : BRAND.white,
+                  color: amount === String(a) ? user.church.primaryColor : '#374151',
+                }}>
+                ${a}
+              </button>
+            ))}
+          </div>
+          <div className="relative">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
+            <input type="number" placeholder="Custom amount" value={amount}
+              onChange={e => setAmount(e.target.value)}
+              className="w-full pl-8 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <button onClick={() => {
+            if (!amount || !sel) { alert('Select a fund and enter an amount'); return; }
+            window.open('https://buy.stripe.com/28E8wPevd5si2P09aub3q00', '_blank');
+          }} className="w-full py-4 rounded-xl text-white font-bold text-lg"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Give {amount ? `$${amount}` : 'Now'}
+          </button>
+          <p className="text-center text-xs text-gray-400">Secure payment via Stripe. 0.5% platform fee applies.</p>
+        </div>
+      )}
+
+      {tab === 'history' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <h3 className="font-bold text-gray-800 mb-3">Giving History</h3>
+          {txns.length === 0 ? (
+            <p className="text-gray-400 text-sm text-center py-4">No giving history yet.</p>
+          ) : (
+            <div className="space-y-3">
+              {txns.map((t, i) => (
+                <div key={i} className="flex justify-between items-center py-2 border-b border-gray-50">
+                  <div>
+                    <p className="font-semibold text-gray-800 text-sm">{t.giving_funds?.name}</p>
+                    <p className="text-xs text-gray-500">{new Date(t.created_at).toLocaleDateString()}</p>
+                  </div>
+                  <p className="font-bold" style={{ color: user.church.primaryColor }}>${t.amount}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'manage funds' && isAdmin && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-gray-800">Giving Funds</h3>
+            <button onClick={() => setAddOpen(!addOpen)}
+              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>+ Add Fund</button>
+          </div>
+          {addOpen && (
+            <div className="p-3 rounded-xl border border-gray-200 space-y-2">
+              <input type="text" placeholder="Fund name" value={newName}
+                onChange={e => setNewName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+              <input type="text" placeholder="Description (optional)" value={newDesc}
+                onChange={e => setNewDesc(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+              <div className="flex gap-2">
+                <button onClick={() => setAddOpen(false)}
+                  className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+                <button onClick={addFund}
+                  className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>Save</button>
+              </div>
+            </div>
+          )}
+          {funds.map((f, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
+              <div>
+                <p className="font-semibold text-gray-800 text-sm">{f.name}</p>
+                {f.is_default && <span className="text-xs text-green-600">Default</span>}
+              </div>
+              <button onClick={async () => {
+                await supabase.from('giving_funds').update({ is_active: !f.is_active }).eq('id', f.id);
+                loadFunds();
+              }} className="text-xs px-3 py-1 rounded-xl"
+                style={{ backgroundColor: f.is_active ? '#F0FFF4' : '#FFF5F5', color: f.is_active ? '#166534' : '#991B1B' }}>
+                {f.is_active ? 'Active' : 'Inactive'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Events Screen ──────────────────────────────────────────────────────────
+function EventsScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [events, setEvents] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', location: '', event_date: '' });
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  async function load() {
+    const { data } = await supabase.from('events').select('*')
+      .eq('church_id', user.church.id).order('event_date', { ascending: true });
+    if (data) setEvents(data);
+  }
+  useEffect(() => { load(); }, [user.church.id]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+          <h2 className="font-bold text-gray-800 text-lg">Events</h2>
+        </div>
+        {isAdmin && (
+          <button onClick={() => setAddOpen(!addOpen)}
+            className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+            style={{ backgroundColor: user.church.primaryColor }}>+ Add</button>
+        )}
+      </div>
+      {addOpen && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <input type="text" placeholder="Event title" value={form.title}
+            onChange={e => setForm({ ...form, title: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <input type="text" placeholder="Location" value={form.location}
+            onChange={e => setForm({ ...form, location: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <input type="datetime-local" value={form.event_date}
+            onChange={e => setForm({ ...form, event_date: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <textarea placeholder="Description (optional)" value={form.description}
+            onChange={e => setForm({ ...form, description: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={async () => {
+              if (!form.title || !form.event_date) return;
+              await supabase.from('events').insert({ ...form, church_id: user.church.id, created_by: user.id });
+              setAddOpen(false); setForm({ title: '', description: '', location: '', event_date: '' }); load();
+            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Save</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-3">
+        {events.length === 0 ? (
+          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-gray-400 text-sm">No events yet.</p>
+          </div>
+        ) : events.map((ev, i) => {
+          const d = new Date(ev.event_date);
+          return (
+            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm flex gap-3">
+              <div className="w-14 h-14 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
+                style={{ backgroundColor: user.church.primaryColor }}>
+                <span className="text-xl font-bold leading-none">{d.getDate()}</span>
+                <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
+              </div>
+              <div className="flex-1">
+                <p className="font-bold text-gray-800">{ev.title}</p>
+                <p className="text-xs text-gray-500">{ev.location} · {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                {ev.description && <p className="text-xs text-gray-600 mt-1">{ev.description}</p>}
+                <button onClick={async () => {
+                  await supabase.from('event_rsvps').insert({ event_id: ev.id, member_id: user.id });
+                  alert('RSVP confirmed!');
+                }} className="mt-2 px-3 py-1 rounded-xl text-white text-xs font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>RSVP</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Business Directory ─────────────────────────────────────────────────────
+function BusinessDirectoryScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [listings, setListings] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ business_name: '', category: '', description: '', phone: '', website: '' });
+  const cats = ['Food & Restaurant','Health & Wellness','Home Services','Professional Services','Beauty & Personal Care','Technology','Education','Other'];
+
+  async function load() {
+    const { data } = await supabase.from('business_listings').select('*')
+      .eq('church_id', user.church.id).eq('approved', true).order('created_at', { ascending: false });
+    if (data) setListings(data);
+  }
+  useEffect(() => { load(); }, [user.church.id]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+          <h2 className="font-bold text-gray-800 text-lg">Business Directory</h2>
+        </div>
+        <button onClick={() => setAddOpen(!addOpen)}
+          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: user.church.primaryColor }}>+ List</button>
+      </div>
+      {addOpen && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <input type="text" placeholder="Business name" value={form.business_name}
+            onChange={e => setForm({ ...form, business_name: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+            <option value="">Select category</option>
+            {cats.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <textarea placeholder="Description" value={form.description}
+            onChange={e => setForm({ ...form, description: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+          <input type="text" placeholder="Phone (optional)" value={form.phone}
+            onChange={e => setForm({ ...form, phone: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <input type="text" placeholder="Website (optional)" value={form.website}
+            onChange={e => setForm({ ...form, website: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={async () => {
+              if (!form.business_name) return;
+              await supabase.from('business_listings').insert({ ...form, church_id: user.church.id, member_id: user.id, approved: false });
+              alert('Submitted for review!');
+              setAddOpen(false); setForm({ business_name: '', category: '', description: '', phone: '', website: '' });
+            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Submit</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-3">
+        {listings.length === 0 ? (
+          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-gray-400 text-sm">No listings yet.</p>
+          </div>
+        ) : listings.map((l, i) => (
+          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+            <p className="font-bold text-gray-800">{l.business_name}</p>
+            <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: BRAND.sage }}>{l.category}</span>
+            {l.description && <p className="text-gray-600 text-sm mt-2">{l.description}</p>}
+            <div className="flex gap-3 mt-2">
+              {l.phone && <a href={`tel:${l.phone}`} className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>📞 Call</a>}
+              {l.website && <a href={l.website} target="_blank" rel="noreferrer" className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>🌐 Website</a>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Member Directory ───────────────────────────────────────────────────────
+function MemberDirectoryScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [members, setMembers] = useState<any[]>([]);
+  const [q, setQ] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('profiles').select('*')
+        .eq('church_id', user.church.id).eq('directory_opt_in', true)
+        .order('full_name', { ascending: true });
+      if (data) setMembers(data);
+    })();
+  }, [user.church.id]);
+
+  const filtered = members.filter(m => (m.full_name || '').toLowerCase().includes(q.toLowerCase()));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Member Directory</h2>
+      </div>
+      <input type="text" placeholder="Search members..." value={q}
+        onChange={e => setQ(e.target.value)}
+        className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none bg-white" />
+      <div className="space-y-2">
+        {filtered.length === 0 ? (
+          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-gray-400 text-sm">No members in directory yet.</p>
+          </div>
+        ) : filtered.map((m, i) => (
+          <div key={i} className="bg-white rounded-2xl p-3 shadow-sm flex items-center gap-3">
+            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={44} color={user.church.primaryColor} />
+            <div className="flex-1">
+              <p className="font-semibold text-gray-800 text-sm">{m.full_name}</p>
+              <p className="text-xs text-gray-500 capitalize">{(m.role || '').replace('_', ' ')}</p>
+              {m.bio && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{m.bio}</p>}
+            </div>
+            <div className="text-right flex-shrink-0">
+              <p className="text-xs font-bold" style={{ color: user.church.primaryColor }}>{m.points || 0} pts</p>
+              <p className="text-xs text-gray-400">{m.streak || 0}d streak</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Announcements Screen ───────────────────────────────────────────────────
+function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [anns, setAnns] = useState<any[]>([]);
+  const [pending, setPending] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ title: '', body: '', category: 'General' });
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  async function load() {
+    const { data } = await supabase.from('announcements')
+      .select('*, profiles(full_name)')
+      .eq('church_id', user.church.id).eq('approved', true)
+      .order('pinned', { ascending: false }).order('created_at', { ascending: false });
+    if (data) setAnns(data);
+    if (isAdmin) {
+      const { data: p } = await supabase.from('announcements')
+        .select('*, profiles(full_name)')
+        .eq('church_id', user.church.id).eq('approved', false)
+        .order('created_at', { ascending: false });
+      if (p) setPending(p);
+    }
+  }
+  useEffect(() => { load(); }, [user.church.id]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+          <h2 className="font-bold text-gray-800 text-lg">Announcements</h2>
+        </div>
+        <button onClick={() => setAddOpen(!addOpen)}
+          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: user.church.primaryColor }}>+ Post</button>
+      </div>
+      {addOpen && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <input type="text" placeholder="Title" value={form.title}
+            onChange={e => setForm({ ...form, title: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+            {['General','Event','Volunteer','Prayer','Lost and Found'].map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <textarea placeholder="Details (optional)" value={form.body}
+            onChange={e => setForm({ ...form, body: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={async () => {
+              if (!form.title) return;
+              await supabase.from('announcements').insert({
+                ...form, church_id: user.church.id, author_id: user.id,
+                approved: isAdmin, pinned: false,
+              });
+              alert(isAdmin ? 'Posted!' : 'Submitted for review!');
+              setAddOpen(false); setForm({ title: '', body: '', category: 'General' }); load();
+            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Submit</button>
+          </div>
+        </div>
+      )}
+      {isAdmin && pending.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <h3 className="font-bold text-amber-600 mb-3">Pending Review ({pending.length})</h3>
+          {pending.map((a, i) => (
+            <div key={i} className="p-3 rounded-xl bg-amber-50 border border-amber-200 mb-2">
+              <p className="font-semibold text-gray-800 text-sm">{a.title}</p>
+              <p className="text-xs text-gray-500 mb-2">by {a.profiles?.full_name}</p>
+              <div className="flex gap-2">
+                <button onClick={async () => { await supabase.from('announcements').update({ approved: true }).eq('id', a.id); load(); }}
+                  className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
+                <button onClick={async () => { await supabase.from('announcements').delete().eq('id', a.id); load(); }}
+                  className="px-3 py-1 rounded-xl bg-red-100 text-red-700 text-xs font-semibold">Decline</button>
               </div>
             </div>
           ))}
         </div>
+      )}
+      <div className="space-y-3">
+        {anns.map((a, i) => (
+          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border-l-4"
+            style={{ borderColor: a.pinned ? user.church.primaryColor : 'transparent' }}>
+            <div className="flex justify-between items-start mb-1">
+              <span className="text-xs px-2 py-0.5 rounded-full text-white"
+                style={{ backgroundColor: BRAND.sage }}>{a.category}</span>
+              {isAdmin && (
+                <button onClick={async () => { await supabase.from('announcements').update({ pinned: !a.pinned }).eq('id', a.id); load(); }}
+                  className="text-xs text-gray-400">{a.pinned ? 'Unpin' : 'Pin'}</button>
+              )}
+            </div>
+            <p className="font-bold text-gray-800 mt-1">{a.pinned ? '📌 ' : ''}{a.title}</p>
+            {a.body && <p className="text-gray-600 text-sm mt-1">{a.body}</p>}
+          </div>
+        ))}
       </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">Leaderboard</h3>
-        <div className="space-y-2">
-          {[
-            { rank: 1, name: 'Sister Angela M.', points: 2840, streak: 21 },
-            { rank: 2, name: 'Minister Tanya R.', points: 2310, streak: 18 },
-            { rank: 3, name: 'Pastor Charles S.', points: 1240, streak: 14 },
-            { rank: 4, name: 'Brother David K.', points: 980, streak: 9 },
-            { rank: 5, name: 'Elder Grace M.', points: 870, streak: 7 },
-          ].map((member, i) => (
-            <div key={i} className="flex items-center gap-3 p-2 rounded-lg"
-              style={{ backgroundColor: i === 2 ? '#F5F3FF' : 'transparent' }}>
-              <span className="w-6 text-center font-bold text-sm"
-                style={{ color: i === 0 ? '#F59E0B' : i === 1 ? '#9CA3AF' : i === 2 ? user.church.primaryColor : '#D1D5DB' }}>
-                {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : member.rank}
-              </span>
-              <div className="flex-1">
-                <p className="font-semibold text-gray-800 text-sm">{member.name}</p>
-                <p className="text-xs text-gray-500">{member.streak} day streak 🔥</p>
+    </div>
+  );
+}
+
+// ── Check In Screen ────────────────────────────────────────────────────────
+function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [done, setDone] = useState(false);
+  const [type, setType] = useState<'in-person' | 'livestream'>('in-person');
+
+  async function checkIn() {
+    await supabase.from('attendance').insert({
+      church_id: user.church.id, member_id: user.id, check_in_type: type,
+    });
+    await supabase.from('profiles').update({ points: user.points + 25, streak: user.streak + 1 }).eq('id', user.id);
+    setDone(true);
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Check In</h2>
+      </div>
+      <div className="bg-white rounded-2xl p-6 shadow-sm text-center">
+        <div className="flex justify-center mb-4">
+          <FloremusLogo size={80} variant="noTagline" />
+        </div>
+        <h3 className="font-bold text-gray-800 text-xl mb-2">{user.church.name}</h3>
+        <p className="text-gray-500 text-sm mb-6">Check in to earn points and keep your streak going</p>
+        {done ? (
+          <div>
+            <p className="text-4xl mb-2">✅</p>
+            <p className="font-bold text-green-600 text-xl">Checked In!</p>
+            <p className="text-gray-500 text-sm mt-1">+25 points earned</p>
+          </div>
+        ) : (
+          <>
+            <div className="flex gap-2 mb-6">
+              {(['in-person', 'livestream'] as const).map(t => (
+                <button key={t} onClick={() => setType(t)}
+                  className="flex-1 py-3 rounded-xl font-semibold text-sm"
+                  style={{ backgroundColor: type === t ? user.church.primaryColor : '#F3F4F6', color: type === t ? BRAND.white : '#6B7280' }}>
+                  {t === 'in-person' ? '🏛️ In Person' : '📺 Livestream'}
+                </button>
+              ))}
+            </div>
+            <button onClick={checkIn}
+              className="w-full py-4 rounded-xl text-white font-bold text-lg"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Check In Now (+25 pts)
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Children's Check-In ────────────────────────────────────────────────────
+function ChildrenCheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [tab, setTab] = useState('checkin');
+  const [form, setForm] = useState({ child_name: '', room: '', allergy_info: '', medical_info: '', authorized_pickups: '', custody_flag: false });
+  const [result, setResult] = useState<any>(null);
+  const [code, setCode] = useState('');
+  const [lookup, setLookup] = useState('');
+  const [found, setFound] = useState<any>(null);
+  const [log, setLog] = useState<any[]>([]);
+  const isWorker = user.role === 'super_admin' || user.role === 'admin' || user.role === 'children_worker';
+  const rooms = ['Nursery (0-2)','Toddlers (2-3)','Pre-K (4-5)','K-2nd Grade','3rd-5th Grade'];
+
+  async function checkInChild() {
+    if (!form.child_name.trim()) { alert("Enter the child's name"); return; }
+    const pk = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const { data } = await supabase.from('children_checkin').insert({
+      church_id: user.church.id, child_name: form.child_name, parent_id: user.id,
+      pickup_code: pk, room: form.room || 'General',
+      allergy_info: form.allergy_info, medical_info: form.medical_info,
+      custody_flag: form.custody_flag,
+      authorized_pickups: form.authorized_pickups.split(',').map((s: string) => s.trim()).filter(Boolean),
+    }).select().single();
+    if (data) { setResult(data); setCode(pk); }
+  }
+
+  async function verifyCode() {
+    if (!lookup.trim()) return;
+    const { data } = await supabase.from('children_checkin').select('*')
+      .eq('pickup_code', lookup.toUpperCase()).is('checked_out_at', null).maybeSingle();
+    setFound(data || null);
+    if (!data) alert('No active check-in found for this code');
+  }
+
+  async function checkout(id: string, name: string) {
+    await supabase.from('children_checkin').update({
+      checked_out_at: new Date().toISOString(), checked_out_by: user.name || user.email,
+    }).eq('id', id);
+    alert(`${name} has been checked out.`);
+    setFound(null); setLookup('');
+  }
+
+  async function loadLog() {
+    const { data } = await supabase.from('children_checkin').select('*')
+      .eq('church_id', user.church.id).order('checked_in_at', { ascending: false }).limit(20);
+    if (data) setLog(data);
+  }
+
+  const tabList = ['checkin', 'pickup', ...(isWorker ? ['audit log'] : [])];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Children's Check-In</h2>
+      </div>
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {tabList.map(t => (
+          <button key={t} onClick={() => { setTab(t); if (t === 'audit log') loadLog(); }}
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'checkin' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          {result ? (
+            <div className="text-center py-4">
+              <p className="text-5xl mb-3">✅</p>
+              <h3 className="font-bold text-gray-800 text-xl">{result.child_name}</h3>
+              <p className="text-gray-500 text-sm">Room: {result.room}</p>
+              <div className="mt-4 p-4 rounded-2xl" style={{ backgroundColor: '#F5F0FF' }}>
+                <p className="text-xs text-gray-500 mb-1">PICKUP CODE</p>
+                <p className="text-4xl font-bold tracking-widest" style={{ color: user.church.primaryColor }}>{code}</p>
+                <p className="text-xs text-gray-400 mt-1">Valid for today's service only</p>
               </div>
-              <p className="font-bold text-sm" style={{ color: user.church.primaryColor }}>
-                {member.points.toLocaleString()} pts
-              </p>
+              <button onClick={() => {
+                setResult(null); setCode('');
+                setForm({ child_name: '', room: '', allergy_info: '', medical_info: '', authorized_pickups: '', custody_flag: false });
+              }} className="mt-4 w-full py-3 rounded-xl text-white font-bold"
+                style={{ backgroundColor: user.church.primaryColor }}>Check In Another</button>
+            </div>
+          ) : (
+            <>
+              {[
+                { label: "Child's Name", key: 'child_name', ph: 'First and last name' },
+                { label: 'Allergy Information', key: 'allergy_info', ph: 'List allergies or none' },
+                { label: 'Medical Information', key: 'medical_info', ph: 'Any conditions or special needs' },
+                { label: 'Authorized Pickups', key: 'authorized_pickups', ph: 'Names separated by commas' },
+              ].map((f, i) => (
+                <div key={i}>
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.label}</label>
+                  <input type="text" placeholder={f.ph} value={(form as any)[f.key]}
+                    onChange={e => setForm({ ...form, [f.key]: e.target.value })}
+                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                </div>
+              ))}
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Room</label>
+                <select value={form.room} onChange={e => setForm({ ...form, room: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                  <option value="">Select room</option>
+                  {rooms.map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-3 p-3 rounded-xl bg-red-50 border border-red-200 cursor-pointer">
+                <input type="checkbox" checked={form.custody_flag}
+                  onChange={e => setForm({ ...form, custody_flag: e.target.checked })} className="rounded" />
+                <div>
+                  <p className="font-semibold text-red-700 text-sm">Custody Alert</p>
+                  <p className="text-xs text-red-500">Flag for custody restrictions</p>
+                </div>
+              </label>
+              <button onClick={checkInChild}
+                className="w-full py-4 rounded-xl text-white font-bold text-lg"
+                style={{ backgroundColor: user.church.primaryColor }}>
+                Check In and Generate Code
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === 'pickup' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <p className="text-gray-500 text-sm">Enter the pickup code to verify and release a child.</p>
+          <div className="flex gap-2">
+            <input type="text" placeholder="PICKUP CODE" value={lookup}
+              onChange={e => setLookup(e.target.value.toUpperCase())}
+              className="flex-1 px-3 py-3 border border-gray-200 rounded-xl text-center font-bold tracking-widest text-lg uppercase focus:outline-none" />
+            <button onClick={verifyCode}
+              className="px-4 py-3 rounded-xl text-white font-bold"
+              style={{ backgroundColor: user.church.primaryColor }}>Verify</button>
+          </div>
+          {found && (
+            <div className="p-4 rounded-2xl border-2"
+              style={{ borderColor: found.custody_flag ? '#EF4444' : '#4ade80' }}>
+              {found.custody_flag && (
+                <div className="mb-3 p-3 rounded-xl bg-red-50 border border-red-200">
+                  <p className="font-bold text-red-700">⚠️ CUSTODY ALERT</p>
+                  <p className="text-sm text-red-600">Contact pastor or admin before releasing this child.</p>
+                </div>
+              )}
+              {found.allergy_info && found.allergy_info !== 'none' && (
+                <div className="mb-3 p-3 rounded-xl bg-orange-50 border border-orange-200">
+                  <p className="font-bold text-orange-700">🚨 ALLERGY: {found.allergy_info}</p>
+                </div>
+              )}
+              <p className="font-bold text-gray-800 text-xl">{found.child_name}</p>
+              <p className="text-gray-500 text-sm">Room: {found.room}</p>
+              <p className="text-gray-500 text-sm">In: {new Date(found.checked_in_at).toLocaleTimeString()}</p>
+              {found.authorized_pickups?.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs font-semibold text-gray-500">AUTHORIZED PICKUPS:</p>
+                  <p className="text-sm text-gray-700">{found.authorized_pickups.join(', ')}</p>
+                </div>
+              )}
+              <button onClick={() => checkout(found.id, found.child_name)}
+                className="w-full mt-4 py-3 rounded-xl text-white font-bold"
+                style={{ backgroundColor: found.custody_flag ? '#EF4444' : user.church.primaryColor }}>
+                {found.custody_flag ? 'Contact Admin Before Releasing' : 'Confirm Pickup'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'audit log' && isWorker && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2">
+          <h3 className="font-bold text-gray-800 mb-2">Audit Log</h3>
+          {log.map((e, i) => (
+            <div key={i} className="p-3 rounded-xl border border-gray-100 text-sm">
+              <div className="flex justify-between">
+                <p className="font-semibold text-gray-800">{e.child_name}</p>
+                {e.custody_flag && <span className="text-red-500 text-xs font-bold">CUSTODY</span>}
+              </div>
+              <p className="text-xs text-gray-500">Room: {e.room}</p>
+              <p className="text-xs text-gray-500">In: {new Date(e.checked_in_at).toLocaleString()}</p>
+              {e.checked_out_at && (
+                <p className="text-xs text-green-600">Out: {new Date(e.checked_out_at).toLocaleString()} by {e.checked_out_by}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Profile Screen ─────────────────────────────────────────────────────────
+function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [name, setName] = useState(user.name || '');
+  const [bio, setBio] = useState(user.bio || '');
+  const [phone, setPhone] = useState(user.phone || '');
+  const [optIn, setOptIn] = useState(user.directoryOptIn || false);
+  const [avatar, setAvatar] = useState(user.avatarUrl || '');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function uploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true);
+    const ext = f.name.split('.').pop();
+    const path = `${user.id}/avatar.${ext}`;
+    const { error } = await supabase.storage.from('avatars').upload(path, f, { upsert: true });
+    if (!error) {
+      const { data } = supabase.storage.from('avatars').getPublicUrl(path);
+      setAvatar(data.publicUrl);
+      await supabase.from('profiles').update({ avatar_url: data.publicUrl }).eq('id', user.id);
+    }
+    setUploading(false);
+  }
+
+  async function save() {
+    await supabase.from('profiles').update({
+      full_name: name, bio, phone, directory_opt_in: optIn,
+    }).eq('id', user.id);
+    alert('Profile saved!');
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">My Profile</h2>
+      </div>
+      <div className="bg-white rounded-2xl p-6 shadow-sm">
+        <div className="flex flex-col items-center mb-6">
+          <div className="relative">
+            <Avatar url={avatar} name={name || user.email} size={80} color={user.church.primaryColor} />
+            <button onClick={() => fileRef.current?.click()}
+              className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              {uploading ? '…' : '📷'}
+            </button>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={uploadAvatar} />
+          <p className="text-xs text-gray-400 mt-2">Tap camera to upload photo (optional)</p>
+        </div>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Full Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</label>
+            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bio</label>
+            <textarea value={bio} onChange={e => setBio(e.target.value)}
+              placeholder="Tell your church community about yourself..."
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+          </div>
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer">
+            <input type="checkbox" checked={optIn} onChange={e => setOptIn(e.target.checked)} className="rounded" />
+            <div>
+              <p className="font-semibold text-gray-700 text-sm">Appear in Member Directory</p>
+              <p className="text-xs text-gray-400">Let other members find you</p>
+            </div>
+          </label>
+          <button onClick={save}
+            className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Save Profile
+          </button>
+        </div>
+        <div className="mt-4 space-y-2">
+          {[
+            { l: 'Points', v: user.points.toLocaleString() },
+            { l: 'Streak', v: `${user.streak} days 🔥` },
+            { l: 'Role', v: user.role.replace(/_/g, ' ') },
+          ].map((s, i) => (
+            <div key={i} className="flex justify-between p-3 rounded-xl bg-gray-50">
+              <span className="text-sm text-gray-600">{s.l}</span>
+              <span className="font-bold text-gray-800 capitalize">{s.v}</span>
             </div>
           ))}
         </div>
@@ -605,174 +2106,381 @@ function GroupsScreen({ user }: { user: User }) {
     </div>
   );
 }
+
+// ── Admin Screen ───────────────────────────────────────────────────────────
+function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [tab, setTab] = useState('overview');
+  const [stats, setStats] = useState({ members: 0, active: 0, attendance: 0 });
+  const [pendingListings, setPendingListings] = useState<any[]>([]);
+  const [brandName, setBrandName] = useState(user.church.name);
+  const [brandTagline, setBrandTagline] = useState(user.church.tagline);
+  const [brandColor, setBrandColor] = useState(user.church.primaryColor);
+  const [brandInitials, setBrandInitials] = useState(user.church.logoInitials);
+  const [logoUrl, setLogoUrl] = useState(user.church.logoUrl || '');
+  const [autoReset, setAutoReset] = useState(false);
+  const [resetFreq, setResetFreq] = useState('monthly');
+  const [members, setMembers] = useState<any[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const isSA = user.role === 'super_admin';
+
+  useEffect(() => {
+    (async () => {
+      const { count: mc } = await supabase.from('profiles')
+        .select('*', { count: 'exact', head: true }).eq('church_id', user.church.id);
+      const wk = new Date(Date.now() - 7 * 86400000).toISOString();
+      const { count: ac } = await supabase.from('attendance')
+        .select('*', { count: 'exact', head: true })
+        .eq('church_id', user.church.id).gte('checked_in_at', wk);
+      const ms = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
+      const { count: atc } = await supabase.from('attendance')
+        .select('*', { count: 'exact', head: true })
+        .eq('church_id', user.church.id).gte('checked_in_at', ms);
+      setStats({ members: mc || 0, active: ac || 0, attendance: atc || 0 });
+
+      const { data: pl } = await supabase.from('business_listings')
+        .select('*, profiles(full_name)')
+        .eq('church_id', user.church.id).eq('approved', false);
+      if (pl) setPendingListings(pl);
+
+      const { data: ps } = await supabase.from('points_settings')
+        .select('*').eq('church_id', user.church.id).maybeSingle();
+      if (ps) { setAutoReset(ps.auto_reset); setResetFreq(ps.reset_frequency); }
+
+      if (isSA) {
+        const { data: mb } = await supabase.from('profiles').select('*')
+          .eq('church_id', user.church.id).order('full_name', { ascending: true });
+        if (mb) setMembers(mb);
+      }
+    })();
+  }, [user.church.id, isSA]);
+
+  async function uploadLogo(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const ext = f.name.split('.').pop();
+    const path = `${user.church.id}/logo.${ext}`;
+    const { error } = await supabase.storage.from('church-logos').upload(path, f, { upsert: true });
+    if (!error) {
+      const { data } = supabase.storage.from('church-logos').getPublicUrl(path);
+      setLogoUrl(data.publicUrl);
+    }
+  }
+
+  const adminTabs = ['overview', 'branding', 'points', ...(isSA ? ['members'] : [])];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Admin Panel</h2>
+      </div>
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {adminTabs.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-semibold capitalize"
+            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'overview' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { l: 'Total Members', v: stats.members, icon: '👥' },
+              { l: 'Active This Week', v: stats.active, icon: '⚡' },
+              { l: 'Attendance MTD', v: stats.attendance, icon: '📍' },
+              { l: 'Giving MTD', v: '$0', icon: '💳' },
+            ].map((s, i) => (
+              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+                <p className="text-2xl mb-1">{s.icon}</p>
+                <p className="text-2xl font-bold text-gray-800">{s.v}</p>
+                <p className="text-xs text-gray-500">{s.l}</p>
+              </div>
+            ))}
+          </div>
+          {pendingListings.length > 0 && (
+            <div className="bg-white rounded-2xl p-4 shadow-sm">
+              <h3 className="font-bold text-gray-800 mb-3">Pending Business Listings</h3>
+              {pendingListings.map((pl, i) => (
+                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-2">
+                  <div>
+                    <p className="font-semibold text-gray-800 text-sm">{pl.business_name}</p>
+                    <p className="text-xs text-gray-500">by {pl.profiles?.full_name}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={async () => {
+                      await supabase.from('business_listings').update({ approved: true }).eq('id', pl.id);
+                      setPendingListings(pendingListings.filter(x => x.id !== pl.id));
+                    }} className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
+                      style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
+                    <button onClick={async () => {
+                      await supabase.from('business_listings').delete().eq('id', pl.id);
+                      setPendingListings(pendingListings.filter(x => x.id !== pl.id));
+                    }} className="px-3 py-1 rounded-xl bg-gray-200 text-gray-600 text-xs font-semibold">Decline</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'branding' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <h3 className="font-bold text-gray-800">Church Branding</h3>
+          {[
+            { l: 'Church Name', v: brandName, s: setBrandName },
+            { l: 'Tagline', v: brandTagline, s: setBrandTagline },
+          ].map((f, i) => (
+            <div key={i}>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.l}</label>
+              <input type="text" value={f.v} onChange={e => f.s(e.target.value)}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            </div>
+          ))}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Logo Initials</label>
+            <input type="text" value={brandInitials} maxLength={3}
+              onChange={e => setBrandInitials(e.target.value.toUpperCase())}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Primary Color</label>
+            <div className="flex gap-3 items-center mt-1">
+              <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)}
+                className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer" />
+              <input type="text" value={brandColor} onChange={e => setBrandColor(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Church Logo (Optional)</label>
+            <div className="flex items-center gap-3 mt-1">
+              {logoUrl && (
+                <img src={logoUrl} alt="logo" className="w-12 h-12 rounded-xl object-contain border border-gray-200" />
+              )}
+              <button onClick={() => fileRef.current?.click()}
+                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600">
+                Upload Logo
+              </button>
+              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={uploadLogo} />
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Replaces initials if uploaded. PNG or SVG recommended.</p>
+          </div>
+          <div className="p-3 rounded-xl" style={{ backgroundColor: brandColor + '20' }}>
+            <p className="text-xs font-semibold text-gray-500 mb-2">Preview</p>
+            <div className="flex items-center gap-2">
+              <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
+                style={{ backgroundColor: brandColor }}>{brandInitials}</div>
+              <div>
+                <p className="font-bold text-gray-800 text-sm">{brandName}</p>
+                <p className="text-xs text-gray-500">{brandTagline}</p>
+              </div>
+            </div>
+          </div>
+          <button onClick={async () => {
+            await supabase.from('churches').update({
+              name: brandName, tagline: brandTagline,
+              primary_color: brandColor, logo_initials: brandInitials,
+              logo_url: logoUrl || null,
+            }).eq('id', user.church.id);
+            alert('Branding saved! Refresh to see changes.');
+          }} className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Save Branding
+          </button>
+        </div>
+      )}
+
+      {tab === 'points' && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+          <h3 className="font-bold text-gray-800">Points Management</h3>
+          <div className="p-4 rounded-xl border-2 border-red-200 bg-red-50">
+            <p className="font-bold text-red-700 mb-1">Manual Reset</p>
+            <p className="text-xs text-red-500 mb-3">Resets all member points to zero immediately. Cannot be undone.</p>
+            <button onClick={async () => {
+              if (!window.confirm('Reset all points to zero? This cannot be undone.')) return;
+              await supabase.from('profiles').update({ points: 0 }).eq('church_id', user.church.id);
+              await supabase.from('points_settings').upsert(
+                { church_id: user.church.id, last_reset_at: new Date().toISOString() },
+                { onConflict: 'church_id' }
+              );
+              alert('All points have been reset.');
+            }} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold">
+              Reset All Points Now
+            </button>
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={autoReset} onChange={e => setAutoReset(e.target.checked)} className="rounded" />
+            <p className="font-semibold text-gray-700 text-sm">Enable Automatic Reset</p>
+          </label>
+          {autoReset && (
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Reset Frequency</label>
+              <select value={resetFreq} onChange={e => setResetFreq(e.target.value)}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                {['weekly','biweekly','monthly','quarterly','semi-annually','annually'].map(f => (
+                  <option key={f} value={f} className="capitalize">{f.charAt(0).toUpperCase() + f.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <button onClick={async () => {
+            await supabase.from('points_settings').upsert(
+              { church_id: user.church.id, auto_reset: autoReset, reset_frequency: resetFreq },
+              { onConflict: 'church_id' }
+            );
+            alert('Settings saved.');
+          }} className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Save Points Settings
+          </button>
+        </div>
+      )}
+
+      {tab === 'members' && isSA && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2">
+          <h3 className="font-bold text-gray-800 mb-2">Member Management</h3>
+          {members.map((m, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
+              <div className="flex items-center gap-2">
+                <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={32} color={user.church.primaryColor} />
+                <div>
+                  <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Unnamed'}</p>
+                  <p className="text-xs text-gray-500">{m.points || 0} pts</p>
+                </div>
+              </div>
+              <select value={m.role}
+                onChange={async e => {
+                  await supabase.from('profiles').update({ role: e.target.value }).eq('id', m.id);
+                  setMembers(members.map(x => x.id === m.id ? { ...x, role: e.target.value } : x));
+                }}
+                className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none">
+                {['member','admin','super_admin','group_leader','children_worker'].map(r => (
+                  <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Pricing Screen ─────────────────────────────────────────────────────────
-// ── Pricing Screen ─────────────────────────────────────────────────────────
-function PricingScreen({ user }: { user: User }) {
+function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const plans = [
     {
-      name: 'Starter',
-      price: '$69',
-      period: '/month',
-      description: 'Perfect for small churches getting started',
-      features: ['Up to 75 members', '5 admin seats', '10 small groups', '5 notification subgroups', 'Full messaging infrastructure', 'Push notifications included', 'QR attendance check-in', 'Prayer wall', 'Challenges and leaderboard'],
-      link: 'https://buy.stripe.com/test_28E8wPevd5si2P09aub3q00',
-      popular: false,
+      name: 'Starter', price: '$69', desc: 'Perfect for small churches',
+      link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00', popular: false,
+      features: ['Up to 75 members','5 admin seats','10 small groups','Push notifications','QR attendance check-in','Prayer wall','Challenges and leaderboard'],
     },
     {
-      name: 'Growth',
-      price: '$147',
-      period: '/month',
-      description: 'For growing churches ready to go deeper',
-      features: ['Up to 250 members', '10 admin seats', '25 small groups', '20 notification subgroups', 'Room capacity management', 'Everything in Starter', "Children's check-in add-on available", 'AI Sermon Assistant add-on available'],
-      link: 'https://buy.stripe.com/test_14AaEXdr94oedtE0DYb3q01',
-      popular: true,
+      name: 'Growth', price: '$147', desc: 'For growing churches ready to go deeper',
+      link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01', popular: true,
+      features: ['Up to 250 members','10 admin seats','25 small groups','Everything in Starter',"Children's check-in add-on",'AI Sermon Assistant add-on'],
     },
     {
-      name: 'Kingdom',
-      price: '$247',
-      period: '/month',
-      description: 'Everything included for thriving churches',
-      features: ['Up to 1,000 members', 'Unlimited admin seats', 'Unlimited small groups', 'Unlimited subgroups', 'AI Sermon Assistant included', "Children's check-in included", 'Analytics Pro included', 'Multi-campus support', 'Everything in Growth'],
-      link: 'https://buy.stripe.com/test_7sY00j1Ir1c261c9aub3q02',
-      popular: false,
+      name: 'Kingdom', price: '$247', desc: 'Everything included for thriving churches',
+      link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02', popular: false,
+      features: ['Up to 1,000 members','Unlimited seats and groups','AI Sermon Assistant included',"Children's check-in included",'Analytics Pro','Multi-campus','Everything in Growth'],
     },
   ];
 
-  const handleSubscribe = (link: string) => {
-    window.open(link, '_blank');
-  };
-
   return (
-    <div className="p-4 space-y-4">
-      <div className="text-center py-4">
-        <h2 className="text-2xl font-bold text-gray-800">Choose Your Plan</h2>
-        <p className="text-gray-500 text-sm mt-1">30-day money back guarantee on all plans</p>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Choose Your Plan</h2>
       </div>
+      <div className="flex justify-center">
+        <FloremusLogo size={80} variant="seal" />
+      </div>
+      <p className="text-center text-gray-500 text-sm">30-day money back guarantee on all plans</p>
 
-      {plans.map((plan, i) => (
-        <div key={i} className={`bg-white rounded-xl p-5 shadow-sm border-2 ${plan.popular ? 'border-purple-500' : 'border-gray-100'} relative`}>
-          {plan.popular && (
-            <div className="absolute -top-3 left-1/2 transform -translate-x-1/2">
-              <span className="bg-purple-600 text-white text-xs font-bold px-3 py-1 rounded-full">
-                MOST POPULAR
-              </span>
+      {plans.map((p, i) => (
+        <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border-2 relative"
+          style={{ borderColor: p.popular ? user.church.primaryColor : '#F3F4F6' }}>
+          {p.popular && (
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+              <span className="text-white text-xs font-bold px-3 py-1 rounded-full"
+                style={{ backgroundColor: user.church.primaryColor }}>MOST POPULAR</span>
             </div>
           )}
           <div className="flex justify-between items-start mb-3">
             <div>
-              <h3 className="text-xl font-bold text-gray-800">{plan.name}</h3>
-              <p className="text-gray-500 text-xs mt-1">{plan.description}</p>
+              <h3 className="text-xl font-bold text-gray-800">{p.name}</h3>
+              <p className="text-gray-500 text-xs mt-1">{p.desc}</p>
             </div>
             <div className="text-right">
-              <span className="text-3xl font-bold text-gray-800">{plan.price}</span>
-              <span className="text-gray-500 text-sm">{plan.period}</span>
+              <span className="text-3xl font-bold text-gray-800">{p.price}</span>
+              <span className="text-gray-500 text-sm">/mo</span>
             </div>
           </div>
-          <div className="space-y-2 mb-4">
-            {plan.features.map((feature, j) => (
+          <div className="space-y-1 mb-4">
+            {p.features.map((f, j) => (
               <div key={j} className="flex items-center gap-2">
                 <span className="text-green-500 text-sm font-bold">✓</span>
-                <span className="text-gray-600 text-sm">{feature}</span>
+                <span className="text-gray-600 text-sm">{f}</span>
               </div>
             ))}
           </div>
-          <button
-            onClick={() => handleSubscribe(plan.link)}
-            className="w-full py-3 rounded-lg text-white font-bold transition-all"
-            style={{ backgroundColor: '#6B21A8' }}>
-            Subscribe to {plan.name}
+          <button onClick={() => window.open(p.link, '_blank')}
+            className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            Subscribe to {p.name}
           </button>
         </div>
       ))}
 
-      <div className="bg-gray-50 rounded-xl p-4 border border-gray-200">
-        <div className="flex justify-between items-center">
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+        <div className="flex justify-between items-start mb-3">
+          <div>
+            <h3 className="font-bold text-gray-800 text-lg">Enterprise</h3>
+            <p className="text-gray-500 text-xs">For churches of 1,000 or more members</p>
+          </div>
+          <div className="text-right">
+            <span className="text-2xl font-bold text-gray-800">$597+</span>
+            <p className="text-gray-500 text-xs">/month</p>
+          </div>
+        </div>
+        <div className="space-y-1 mb-4">
+          {['Dedicated account manager','Native iOS and Android app','4-hour support SLA','Quarterly strategy calls','Custom feature review','Everything in Kingdom'].map((f, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="text-green-500 text-sm font-bold">✓</span>
+              <span className="text-gray-600 text-sm">{f}</span>
+            </div>
+          ))}
+        </div>
+        <a href="mailto:enterprise@floremus.church?subject=Enterprise Pricing Inquiry&body=Hi, I am interested in Floremus Enterprise pricing for our church."
+          className="block w-full py-3 rounded-xl text-center font-bold text-white"
+          style={{ backgroundColor: BRAND.plum }}>
+          Contact Us for Enterprise Pricing
+        </a>
+      </div>
+
+      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+        <div className="flex justify-between items-center mb-2">
           <div>
             <h3 className="font-bold text-gray-800">Concierge Launch</h3>
-            <p className="text-gray-500 text-xs mt-1">Hands-on onboarding with a dedicated rep for 30 days</p>
+            <p className="text-gray-500 text-xs">Hands-on onboarding with a dedicated rep</p>
           </div>
           <div className="text-right">
             <span className="text-2xl font-bold text-gray-800">$199</span>
             <p className="text-gray-500 text-xs">one time</p>
           </div>
         </div>
-        <button
-          onClick={() => handleSubscribe('https://buy.stripe.com/test_6oUcN5dr99IyfBMdqKb3q04')}
-          className="w-full mt-3 py-2 rounded-lg font-bold text-sm"
-          style={{ backgroundColor: '#F3F4F6', color: '#374151' }}>
+        <button onClick={() => window.open('https://buy.stripe.com/6oUcN5dr99IyfBMdqKb3q04', '_blank')}
+          className="w-full py-2 rounded-xl font-bold text-sm border"
+          style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
           Add Concierge Launch
         </button>
       </div>
 
-      <p className="text-center text-xs text-gray-400 pb-4">
-        All plans include a 30-day money back guarantee. Cancel anytime.
-      </p>
-    </div>
-  );
-}
-// ── Admin Screen ───────────────────────────────────────────────────────────
-function AdminScreen({ user }: { user: User }) {
-  const stats = [
-    { label: 'Total Members', value: '187', icon: '👥' },
-    { label: 'Active This Week', value: '134', icon: '⚡' },
-    { label: 'Giving MTD', value: '$8,420', icon: '💳' },
-    { label: 'Attendance', value: '156', icon: '📍' },
-  ];
-
-  return (
-    <div className="p-4 space-y-4">
-      <div className="rounded-xl p-4 text-white"
-        style={{ backgroundColor: user.church.primaryColor }}>
-        <h2 className="text-lg font-bold mb-1">Admin Dashboard</h2>
-        <p className="text-sm opacity-80">{user.church.name}</p>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        {stats.map((s, i) => (
-          <div key={i} className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-            <p className="text-2xl mb-1">{s.icon}</p>
-            <p className="text-2xl font-bold text-gray-800">{s.value}</p>
-            <p className="text-xs text-gray-500">{s.label}</p>
-          </div>
-        ))}
-      </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">Pending Approvals</h3>
-        <div className="space-y-2">
-          {[
-            { type: 'New Member', name: 'Marcus J.', time: '1 hour ago' },
-            { type: 'Announcement', name: 'Youth Night Flyer', time: '2 hours ago' },
-            { type: 'Business Listing', name: 'Grace Hair Studio', time: '3 hours ago' },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-              <div>
-                <p className="text-xs text-gray-500">{item.type}</p>
-                <p className="font-semibold text-gray-800 text-sm">{item.name}</p>
-              </div>
-              <div className="flex gap-2">
-                <button className="px-3 py-1 rounded-lg text-white text-xs font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
-                <button className="px-3 py-1 rounded-lg bg-gray-200 text-gray-600 text-xs font-semibold">Decline</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100">
-        <h3 className="font-bold text-gray-800 mb-3">Quick Actions</h3>
-        <div className="grid grid-cols-2 gap-2">
-          {[
-            { label: 'Post Devotional', icon: '📝' },
-            { label: 'Send Notification', icon: '🔔' },
-            { label: 'Add Challenge', icon: '⚡' },
-            { label: 'View Reports', icon: '📊' },
-          ].map((action, i) => (
-            <button key={i} className="p-3 rounded-lg border border-gray-200 flex items-center gap-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
-              <span>{action.icon}</span>
-              {action.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <p className="text-center text-xs text-gray-400 pb-4">All plans include a 30-day money back guarantee. Cancel anytime.</p>
     </div>
   );
 }
@@ -780,141 +2488,105 @@ function AdminScreen({ user }: { user: User }) {
 // ── Main App ───────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [activeTab, setActiveTab] = useState('home');
+  const [tab, setTab] = useState('home');
   const [loading, setLoading] = useState(true);
 
-  const loadUserProfile = async (session: any) => {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .maybeSingle();
-
-    if (profile && profile.church_id) {
-      const { data: churchData } = await supabase
-        .from('churches')
-        .select('*')
-        .eq('id', profile.church_id)
-        .maybeSingle();
-
-      if (churchData) {
+  async function loadProfile(session: any) {
+    const { data: profile } = await supabase.from('profiles')
+      .select('*').eq('id', session.user.id).maybeSingle();
+    if (profile?.church_id) {
+      const { data: church } = await supabase.from('churches')
+        .select('*').eq('id', profile.church_id).maybeSingle();
+      if (church) {
         setUser({
           id: session.user.id,
-          name: profile.full_name || session.user.email,
-          email: session.user.email,
+          name: profile.full_name || '',
+          email: session.user.email || '',
           role: profile.role || 'member',
           points: profile.points || 0,
           streak: profile.streak || 0,
+          avatarUrl: profile.avatar_url || '',
+          directoryOptIn: profile.directory_opt_in || false,
+          bio: profile.bio || '',
+          phone: profile.phone || '',
           church: {
-            id: churchData.id,
-            name: churchData.name,
-            tagline: churchData.tagline || '',
-            primaryColor: churchData.primary_color || '#6B21A8',
-            secondaryColor: churchData.secondary_color || '#C0C0C0',
-            logoInitials: churchData.logo_initials || 'FC',
+            id: church.id,
+            name: church.name,
+            tagline: church.tagline || '',
+            primaryColor: church.primary_color || BRAND.purple,
+            secondaryColor: church.secondary_color || BRAND.silver,
+            logoInitials: church.logo_initials || 'FC',
+            logoUrl: church.logo_url || '',
+            subscriptionStatus: church.subscription_status || 'trial',
+            subscriptionTier: church.subscription_tier || 'starter',
           },
         });
-      } else {
-        setUser(demoUser);
       }
-    } else {
-      setUser(demoUser);
     }
     setLoading(false);
-  };
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        loadUserProfile(session);
-      } else {
-        setLoading(false);
-      }
+      if (session) loadProfile(session);
+      else setLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) {
-        loadUserProfile(session);
-      } else {
-        setUser(null);
-      }
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (session) loadProfile(session);
+      else { setUser(null); setLoading(false); }
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center"
-        style={{ backgroundColor: '#0F0620' }}>
-        <div className="text-center">
-          <p className="text-yellow-500 text-xl font-bold">Floremus</p>
-          <p className="text-gray-400 text-sm italic mt-1">Built for flourishing.</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: BRAND.plum }}>
+        <FloremusLogo size={120} variant="silver" />
       </div>
     );
   }
 
-  if (!user) {
-    return <LoginScreen onLogin={setUser} />;
-  }
+  if (!user) return <LoginScreen onLogin={setUser} />;
 
-  const renderScreen = () => {
-    switch (activeTab) {
-      case 'home': return <HomeScreen user={user} />;
-      case 'sunday': return <SundayScreen user={user} />;
-      case 'community': return <CommunityScreen user={user} />;
-      case 'groups': return <GroupsScreen user={user} />;
-      case 'admin': return <AdminScreen user={user} />;
-      case 'pricing': return <PricingScreen user={user} />;
-      default: return <HomeScreen user={user} />;
-    }
-  };
+  const color = user.church.primaryColor;
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen" style={{ backgroundColor: BRAND.bg }}>
       <div className="max-w-md mx-auto relative">
         <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {user.church.logoInitials}
-            </div>
+            {user.church.logoUrl ? (
+              <img src={user.church.logoUrl} alt="logo" className="w-8 h-8 rounded-full object-contain" />
+            ) : (
+              <img src={LOGOS.silver} alt="Floremus" className="w-8 h-8 object-contain" />
+            )}
             <div>
               <p className="font-bold text-gray-800 text-sm leading-tight">{user.church.name}</p>
-              <p className="text-xs text-yellow-600 italic">Floremus</p>
+              <p className="text-xs text-gray-400 italic">Floremus</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold text-gray-500">{user.points} pts</span>
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {user.name.charAt(0)}
-            </div>
-            <button
-              onClick={() => setActiveTab('pricing')}
-              className="text-xs font-semibold px-2 py-1 rounded-lg text-white"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              Upgrade
+            <button onClick={() => setTab('more')}>
+              <Avatar url={user.avatarUrl} name={user.name || user.email} size={32} color={color} />
             </button>
             <button
-              onClick={async () => {
-                await supabase.auth.signOut();
-                setUser(null);
-              }}
+              onClick={async () => { await supabase.auth.signOut(); setUser(null); }}
               className="text-xs text-gray-400 hover:text-red-400 ml-1">
               Sign out
             </button>
           </div>
         </div>
+
         <div className="pb-20">
-          {renderScreen()}
+          {tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} />}
+          {tab === 'sunday' && <SundayScreen user={user} />}
+          {tab === 'community' && <CommunityScreen user={user} />}
+          {tab === 'groups' && <GroupsScreen user={user} />}
+          {tab === 'more' && <MoreScreen user={user} />}
         </div>
-        <BottomNav
-          active={activeTab}
-          setActive={setActiveTab}
-          color={user.church.primaryColor}
-        />
+
+        <BottomNav active={tab} setActive={setTab} color={color} />
       </div>
     </div>
   );
