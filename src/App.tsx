@@ -2130,6 +2130,60 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
     </div>
   );
 }
+function InviteGenerator({ user }: { user: User }) {
+  const [inviteLink, setInviteLink] = useState('');
+  const [generating, setGenerating] = useState(false);
+
+  async function generateInvite() {
+    setGenerating(true);
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    await supabase.from('invites').insert({
+      church_id: user.church.id,
+      code,
+      created_by: user.id,
+      active: true,
+    });
+    const link = `${window.location.origin}/join/${code}`;
+    setInviteLink(link);
+    setGenerating(false);
+  }
+
+  async function copyLink() {
+    await navigator.clipboard.writeText(inviteLink);
+    alert('Invite link copied!');
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm">
+      <h3 className="font-bold text-gray-800 mb-1">Invite Members</h3>
+      <p className="text-gray-500 text-xs mb-3">Generate a link to share with your congregation. Anyone with the link can join your church.</p>
+      {inviteLink ? (
+        <div className="space-y-2">
+          <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
+            <p className="text-xs text-gray-500 break-all">{inviteLink}</p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={copyLink}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Copy Link
+            </button>
+            <button onClick={() => setInviteLink('')}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">
+              Generate New
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={generateInvite} disabled={generating}
+          className="w-full py-3 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: user.church.primaryColor, opacity: generating ? 0.7 : 1 }}>
+          {generating ? 'Generating...' : 'Generate Invite Link'}
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
@@ -2248,8 +2302,8 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
               ))}
             </div>
           )}
-        </div>
-      )}
+          <InviteGenerator user={user} />
+        </div>)}
 
       {tab === 'branding' && (
         <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
@@ -2623,9 +2677,108 @@ function App() {
       </div>
     );
   }
+function JoinScreen({ code }: { code: string }) {
+  const [church, setChurch] = useState<any>(null);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data: invite } = await supabase.from('invites').select('*, churches(*)').eq('code', code).eq('active', true).maybeSingle();
+      if (invite?.churches) setChurch(invite.churches);
+      else alert('This invite link is invalid or has expired.');
+    })();
+  }, [code]);
+
+  async function join() {
+    if (!name || !email || !password) { alert('Please fill in all fields'); return; }
+    if (password !== confirm) { alert('Passwords do not match'); return; }
+    if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) { alert(error.message); setLoading(false); return; }
+    if (data.user) {
+      await supabase.from('profiles').insert({
+        id: data.user.id,
+        church_id: church.id,
+        full_name: name,
+        role: 'member',
+        points: 0,
+        streak: 0,
+      });
+      setDone(true);
+    }
+    setLoading(false);
+  }
+
+  if (!church) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: BRAND.plum }}>
+      <p className="text-white">Loading...</p>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={140} variant="withTagline" />
+        </div>
+        {done ? (
+          <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+            <p className="text-3xl mb-3">🎉</p>
+            <p className="text-white font-bold text-xl mb-2">Welcome to {church.name}!</p>
+            <p className="text-gray-400 text-sm mb-4">Your account is ready. Sign in to get started.</p>
+            <button onClick={() => window.location.href = '/'}
+              className="w-full py-3 rounded-xl font-bold text-white"
+              style={{ backgroundColor: BRAND.purple }}>
+              Sign In Now
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="text-center mb-4">
+              <p className="text-white font-bold text-xl">{church.name}</p>
+              <p className="text-gray-400 text-sm">You have been invited to join</p>
+            </div>
+            <input type="text" placeholder="Your full name" value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <input type="email" placeholder="Email address" value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <input type="password" placeholder="Create a password" value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <input type="password" placeholder="Confirm password" value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <button onClick={join} disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-white text-lg"
+              style={{ backgroundColor: church.primary_color || BRAND.purple, opacity: loading ? 0.7 : 1 }}>
+              {loading ? 'Creating account...' : `Join ${church.name}`}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
   if (window.location.pathname === '/reset-password') {
     return <ResetPasswordScreen />;
+  }
+
+  if (window.location.pathname.startsWith('/join/')) {
+    const code = window.location.pathname.split('/join/')[1];
+    return <JoinScreen code={code} />;
   }
 
   if (!user) return <LoginScreen onLogin={setUser} />;
