@@ -2492,6 +2492,60 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
     </div>
   );
 }
+function ResetPasswordScreen() {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function updatePassword() {
+    if (password !== confirm) { alert('Passwords do not match'); return; }
+    if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) alert(error.message);
+    else setDone(true);
+    setLoading(false);
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md space-y-4">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={120} variant="withTagline" />
+        </div>
+        {done ? (
+          <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+            <p className="text-white font-semibold mb-2">Password updated!</p>
+            <p className="text-gray-400 text-sm mb-4">You can now sign in with your new password.</p>
+            <button onClick={() => window.location.href = '/'}
+              className="w-full py-3 rounded-xl font-bold text-white"
+              style={{ backgroundColor: BRAND.purple }}>
+              Go to Sign In
+            </button>
+          </div>
+        ) : (
+          <>
+            <p className="text-center text-gray-400 text-sm">Enter your new password below.</p>
+            <input type="password" placeholder="New password" value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <input type="password" placeholder="Confirm new password" value={confirm}
+              onChange={e => setConfirm(e.target.value)}
+              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
+            <button onClick={updatePassword} disabled={loading}
+              className="w-full py-3 rounded-xl font-bold text-white"
+              style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
+              {loading ? 'Updating...' : 'Update Password'}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Main App ───────────────────────────────────────────────────────────────
 function App() {
@@ -2552,6 +2606,10 @@ function App() {
         <FloremusLogo size={120} variant="silver" />
       </div>
     );
+  }
+
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPasswordScreen />;
   }
 
   if (!user) return <LoginScreen onLogin={setUser} />;
