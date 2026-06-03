@@ -1779,6 +1779,22 @@ function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [type, setType] = useState<'in-person' | 'livestream'>('in-person');
 
   async function checkIn() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const { data: existing } = await supabase
+      .from('attendance')
+      .select('id')
+      .eq('church_id', user.church.id)
+      .eq('member_id', user.id)
+      .gte('checked_in_at', today.toISOString())
+      .maybeSingle();
+
+    if (existing) {
+      alert('You have already checked in today!');
+      setDone(true);
+      return;
+    }
+
     await supabase.from('attendance').insert({
       church_id: user.church.id, member_id: user.id, check_in_type: type,
     });
