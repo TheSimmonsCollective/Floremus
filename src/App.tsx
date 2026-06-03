@@ -877,6 +877,7 @@ function CommunityScreen({ user }: { user: User }) {
     return () => { supabase.removeChannel(channel); };
   }, [user.church.id]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
 
   async function postPrayer() {
@@ -1313,6 +1314,7 @@ function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadFunds(); loadTxns(); }, [user.church.id]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   async function addFund() {
     if (!newName.trim()) return;
@@ -1463,6 +1465,7 @@ function EventsScreen({ user, onBack }: { user: User; onBack: () => void }) {
     if (data) setEvents(data);
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
 
   return (
@@ -1548,6 +1551,7 @@ function BusinessDirectoryScreen({ user, onBack }: { user: User; onBack: () => v
       .eq('church_id', user.church.id).eq('approved', true).order('created_at', { ascending: false });
     if (data) setListings(data);
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
 
@@ -1685,6 +1689,7 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
         .order('created_at', { ascending: false });
       if (p) setPending(p);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
