@@ -24,7 +24,20 @@
       work correctly both with client-side routing and a non-root public URL.
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
-    <title>React App</title>
+  <title>Floremus</title>
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+<script>
+  window.OneSignalDeferred = window.OneSignalDeferred || [];
+  OneSignalDeferred.push(async function(OneSignal) {
+    await OneSignal.init({
+      appId: "ff657d60-a65d-4ec7-aa26-ccdd92ec81bb",
+      notifyButton: {
+        enable: false,
+      },
+      allowLocalhostAsSecureOrigin: true,
+    });
+  });
+</script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>

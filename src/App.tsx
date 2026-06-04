@@ -2670,6 +2670,21 @@ function App() {
     return () => subscription.unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (user) {
+      const requestPermission = async () => {
+        try {
+          const OneSignal = (window as any).OneSignal;
+          if (OneSignal) {
+            await OneSignal.Notifications.requestPermission();
+          }
+        } catch (e) {
+          console.log('OneSignal not ready');
+        }
+      };
+      setTimeout(requestPermission, 3000);
+    }
+  }, [user]);
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: BRAND.plum }}>
