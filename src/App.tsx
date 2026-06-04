@@ -2190,21 +2190,17 @@ function NotificationSender({ user }: { user: User }) {
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
 
-  async function sendNotification() {
+async function sendNotification() {
     if (!title || !message) { alert('Please enter a title and message'); return; }
     setSending(true);
     try {
-      const response = await fetch('https://onesignal.com/api/v1/notifications', {
+      const response = await fetch('https://cjnzizyxjoqmmnksfitd.supabase.co/functions/v1/send-notification', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Basic ${process.env.REACT_APP_ONESIGNAL_REST_API_KEY}`,
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           app_id: 'ff657d60-a65d-4ec7-aa26-ccdd92ec81bb',
-          included_segments: ['All'],
-          headings: { en: title },
-          contents: { en: message },
+          title,
+          message,
         }),
       });
       const data = await response.json();
@@ -2214,7 +2210,7 @@ function NotificationSender({ user }: { user: User }) {
         setMessage('');
         setTimeout(() => setSent(false), 3000);
       } else {
-        alert('Failed to send. Check your OneSignal API key.');
+        alert('Failed to send. Please try again.');
       }
     } catch {
       alert('Failed to send notification.');
