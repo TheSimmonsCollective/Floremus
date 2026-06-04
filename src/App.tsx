@@ -2677,6 +2677,45 @@ function App() {
       </div>
     );
   }
+  function PaywallScreen({ user }: { user: User }) {
+  const plans = [
+    { name: 'Starter', price: '$69', link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00' },
+    { name: 'Growth', price: '$147', link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01' },
+    { name: 'Kingdom', price: '$247', link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02' },
+  ];
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={120} variant="silver" />
+        </div>
+        <div className="text-center mb-8">
+          <h2 className="text-2xl font-bold text-white mb-2">Choose Your Plan</h2>
+          <p className="text-gray-400 text-sm">Select a plan to activate {user.church.name} on Floremus.</p>
+        </div>
+        <div className="space-y-3">
+          {plans.map((p, i) => (
+            <button key={i} onClick={() => window.open(p.link, '_blank')}
+              className="w-full p-4 rounded-2xl text-left flex items-center justify-between"
+              style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}>
+              <div>
+                <p className="font-bold text-white">{p.name}</p>
+                <p className="text-gray-400 text-xs">per month</p>
+              </div>
+              <span className="text-2xl font-bold text-white">{p.price}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-center text-gray-500 text-xs mt-6">30-day money back guarantee. Cancel anytime.</p>
+        <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }}
+          className="w-full mt-4 text-center text-sm" style={{ color: BRAND.sage }}>
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
 function JoinScreen({ code }: { code: string }) {
   const [church, setChurch] = useState<any>(null);
   const [name, setName] = useState('');
@@ -2776,12 +2815,16 @@ function JoinScreen({ code }: { code: string }) {
     return <ResetPasswordScreen />;
   }
 
-  if (window.location.pathname.startsWith('/join/')) {
+if (window.location.pathname.startsWith('/join/')) {
     const code = window.location.pathname.split('/join/')[1];
     return <JoinScreen code={code} />;
   }
 
   if (!user) return <LoginScreen onLogin={setUser} />;
+
+  if (user.church.subscriptionStatus !== 'active') {
+    return <PaywallScreen user={user} />;
+  }
 
   const color = user.church.primaryColor;
 
