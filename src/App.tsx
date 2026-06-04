@@ -2184,7 +2184,77 @@ function InviteGenerator({ user }: { user: User }) {
     </div>
   );
 }
+function NotificationSender({ user }: { user: User }) {
+  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
 
+  async function sendNotification() {
+    if (!title || !message) { alert('Please enter a title and message'); return; }
+    setSending(true);
+    try {
+      const response = await fetch('https://onesignal.com/api/v1/notifications', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Basic ${process.env.REACT_APP_ONESIGNAL_REST_API_KEY}`,
+        },
+        body: JSON.stringify({
+          app_id: 'ff657d60-a65d-4ec7-aa26-ccdd92ec81bb',
+          included_segments: ['All'],
+          headings: { en: title },
+          contents: { en: message },
+        }),
+      });
+      const data = await response.json();
+      if (data.id) {
+        setSent(true);
+        setTitle('');
+        setMessage('');
+        setTimeout(() => setSent(false), 3000);
+      } else {
+        alert('Failed to send. Check your OneSignal API key.');
+      }
+    } catch {
+      alert('Failed to send notification.');
+    }
+    setSending(false);
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+      <h3 className="font-bold text-gray-800">Send Push Notification</h3>
+      <p className="text-gray-500 text-xs">Send a push notification to all subscribed members instantly.</p>
+      {sent ? (
+        <div className="text-center py-6">
+          <p className="text-3xl mb-2">✅</p>
+          <p className="font-bold text-green-600">Notification sent!</p>
+        </div>
+      ) : (
+        <>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
+            <input type="text" placeholder="e.g. Service starts in 30 minutes" value={title}
+              onChange={e => setTitle(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Message</label>
+            <textarea placeholder="Type your message here..." value={message}
+              onChange={e => setMessage(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-24 resize-none" />
+          </div>
+          <button onClick={sendNotification} disabled={sending}
+            className="w-full py-3 rounded-xl text-white font-bold"
+            style={{ backgroundColor: user.church.primaryColor, opacity: sending ? 0.7 : 1 }}>
+            {sending ? 'Sending...' : 'Send to All Members'}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [tab, setTab] = useState('overview');
@@ -2244,7 +2314,7 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
     }
   }
 
-  const adminTabs = ['overview', 'branding', 'points', ...(isSA ? ['members'] : [])];
+const adminTabs = ['overview', 'branding', 'points', 'notifications', ...(isSA ? ['members'] : [])];
 
   return (
     <div className="space-y-4">
@@ -2416,6 +2486,9 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
             Save Points Settings
           </button>
         </div>
+      )}
+{tab === 'notifications' && (
+        <NotificationSender user={user} />
       )}
 
       {tab === 'members' && isSA && (
