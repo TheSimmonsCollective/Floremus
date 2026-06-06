@@ -418,38 +418,101 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
   );
 }
 
-// ── Sunday Screen ──────────────────────────────────────────────────────────
 function SundayScreen({ user }: { user: User }) {
   const [tab, setTab] = useState('notes');
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [privateNotes, setPrivateNotes] = useState('');
   const [submitted, setSubmitted] = useState(false);
   const [shared, setShared] = useState<any[]>([]);
+  const [sermon, setSermon] = useState<any>(null);
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('sermon_notes')
+      const { data: sn } = await supabase.from('sermon_notes')
         .select('*, profiles(full_name, avatar_url)')
         .eq('church_id', user.church.id).eq('shared', true)
         .order('created_at', { ascending: false }).limit(10);
-      if (data) setShared(data);
+      if (sn) setShared(sn);
+      const { data: ws } = await supabase.from('weekly_sermon').select('*')
+        .eq('church_id', user.church.id).eq('published', true).maybeSingle();
+      if (ws) setSermon(ws);
     })();
   }, [user.church.id]);
 
-  const notes = [
-    { type: 'blank', label: 'The Holy Spirit was given to us as our ___' },
-    { type: 'blank', label: 'We are called to walk in the ___ not in the flesh' },
-    { type: 'reflection', label: 'What is one area where you need to surrender to the Spirit today?' },
-    { type: 'blank', label: 'The fruit of the Spirit is ___, joy, peace...' },
-    { type: 'reflection', label: "How will you apply today's message this week?" },
-  ];
-
   async function submitNotes() {
     await supabase.from('sermon_notes').insert({
-      church_id: user.church.id, member_id: user.id, answers, shared: false, points_awarded: 50,
+      church_id: user.church.id, member_id: user.id,
+      answers, shared: false, points_awarded: 50,
+      private_notes: privateNotes,
     });
     await supabase.from('profiles').update({ points: user.points + 50 }).eq('id', user.id);
     setSubmitted(true);
+  }
+
+  function printNotes() {
+    const printContent = `
+      <html>
+      <head>
+        <title>Sermon Notes - ${sermon?.title || 'Sunday Service'}</title>
+        <style>
+          body { font-family: Georgia, serif; max-width: 700px; margin: 40px auto; padding: 20px; color: #1a1a1a; }
+          h1 { font-size: 24px; margin-bottom: 4px; }
+          .scripture { color: #6B21A8; font-style: italic; margin-bottom: 20px; }
+          .section { margin-bottom: 24px; }
+          .section-title { font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.1em; color: #666; margin-bottom: 8px; }
+          .question { margin-bottom: 12px; }
+          .question-text { font-size: 14px; margin-bottom: 4px; }
+          .answer-line { border-bottom: 1px solid #ccc; min-height: 24px; padding-bottom: 4px; font-size: 14px; color: #333; }
+          .private { background: #f9f9f9; border: 1px solid #eee; padding: 12px; border-radius: 8px; min-height: 80px; }
+          .footer { margin-top: 40px; font-size: 11px; color: #999; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <h1>${sermon?.title || 'Sermon Notes'}</h1>
+        <p class="scripture">${sermon?.scripture || ''}</p>
+        ${sermon?.series ? `<p style="font-size:12px;color:#888;">Series: ${sermon.series}</p>` : ''}
+        ${sermon?.blanks?.length > 0 ? `
+        <div class="section">
+          <div class="section-title">Fill in the Blanks</div>
+          ${sermon.blanks.map((b: any, i: number) => `
+            <div class="question">
+              <div class="question-text">${b.label}</div>
+              <div class="answer-line">${answers[`blank_${i}`] || ''}</div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+        ${sermon?.open_ended?.length > 0 ? `
+        <div class="section">
+          <div class="section-title">Questions</div>
+          ${sermon.open_ended.map((q: string, i: number) => `
+            <div class="question">
+              <div class="question-text">${q}</div>
+              <div class="answer-line">${answers[`open_${i}`] || ''}</div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+        ${sermon?.reflections?.length > 0 ? `
+        <div class="section">
+          <div class="section-title">Reflections</div>
+          ${sermon.reflections.map((r: string, i: number) => `
+            <div class="question">
+              <div class="question-text">${r}</div>
+              <div class="answer-line">${answers[`ref_${i}`] || ''}</div>
+            </div>
+          `).join('')}
+        </div>` : ''}
+        ${privateNotes ? `
+        <div class="section">
+          <div class="section-title">My Private Notes</div>
+          <div class="private">${privateNotes}</div>
+        </div>` : ''}
+        <div class="footer">${user.church.name} · ${new Date().toLocaleDateString()} · Powered by Floremus</div>
+      </body>
+      </html>
+    `;
+    const win = window.open('', '_blank');
+    if (win) { win.document.write(printContent); win.document.close(); win.print(); }
   }
 
   const tabs = ['notes', 'community', ...(isAdmin ? ['ai assistant'] : [])];
@@ -470,45 +533,101 @@ function SundayScreen({ user }: { user: User }) {
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm">
             <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
-              style={{ backgroundColor: user.church.primaryColor }}>SERIES</span>
-            <h2 className="text-xl font-bold text-gray-800 mt-2">Life in the Spirit</h2>
-            <p className="text-gray-500 text-sm">Galatians 5:16-25</p>
+              style={{ backgroundColor: user.church.primaryColor }}>
+              {sermon?.series || 'SERIES'}
+            </span>
+            <h2 className="text-xl font-bold text-gray-800 mt-2">{sermon?.title || 'Sermon Notes'}</h2>
+            <p className="text-gray-500 text-sm">{sermon?.scripture || ''}</p>
           </div>
-          <div className="bg-white rounded-2xl p-4 shadow-sm">
-            <div className="rounded-xl p-3 mb-4 border-l-4"
-              style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-              <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
-              <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." — Galatians 5:16</p>
+
+          {submitted ? (
+            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+              <p className="text-3xl mb-2">🎉</p>
+              <p className="font-bold text-gray-800">Notes submitted! +50 points earned</p>
+              <button onClick={printNotes}
+                className="mt-4 w-full py-3 rounded-xl text-white font-bold"
+                style={{ backgroundColor: user.church.primaryColor }}>
+                🖨️ Print or Save My Notes
+              </button>
             </div>
-            {submitted ? (
-              <div className="text-center py-6">
-                <p className="text-3xl mb-2">🎉</p>
-                <p className="font-bold text-gray-800">Notes submitted! +50 points earned</p>
-              </div>
-            ) : (
-              <>
-                {notes.map((n, i) => (
-                  <div key={i} className="mb-4">
-                    <p className="text-sm text-gray-700 mb-1">{n.label}</p>
-                    {n.type === 'blank' ? (
-                      <input type="text" placeholder="Your answer..." value={answers[i] || ''}
-                        onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+          ) : (
+            <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+              {!sermon && (
+                <div className="rounded-xl p-3 border-l-4"
+                  style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
+                  <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
+                  <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." — Galatians 5:16</p>
+                </div>
+              )}
+
+              {sermon?.blanks?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Fill in the Blanks</p>
+                  {sermon.blanks.map((b: any, i: number) => (
+                    <div key={i} className="mb-3">
+                      <p className="text-sm text-gray-700 mb-1">{b.label}</p>
+                      <input type="text" placeholder="Your answer..."
+                        value={answers[`blank_${i}`] || ''}
+                        onChange={e => setAnswers({ ...answers, [`blank_${i}`]: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-                    ) : (
-                      <textarea placeholder="Your reflection..." value={answers[i] || ''}
-                        onChange={e => setAnswers({ ...answers, [i]: e.target.value })}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {sermon?.open_ended?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Questions</p>
+                  {sermon.open_ended.map((q: string, i: number) => (
+                    <div key={i} className="mb-3">
+                      <p className="text-sm text-gray-700 mb-1">{q}</p>
+                      <textarea placeholder="Your answer..."
+                        value={answers[`open_${i}`] || ''}
+                        onChange={e => setAnswers({ ...answers, [`open_${i}`]: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-                    )}
-                  </div>
-                ))}
-                <button onClick={submitNotes}
-                  className="w-full py-3 rounded-xl text-white font-bold"
-                  style={{ backgroundColor: user.church.primaryColor }}>
-                  Submit Notes (+50 points)
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {sermon?.reflections?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Reflections</p>
+                  {sermon.reflections.map((r: string, i: number) => (
+                    <div key={i} className="mb-3">
+                      <p className="text-sm text-gray-700 mb-1">{r}</p>
+                      <textarea placeholder="Your reflection..."
+                        value={answers[`ref_${i}`] || ''}
+                        onChange={e => setAnswers({ ...answers, [`ref_${i}`]: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">My Private Notes</p>
+                <textarea placeholder="Personal notes just for you. These are never shared..."
+                  value={privateNotes}
+                  onChange={e => setPrivateNotes(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-24 resize-none" />
+                <p className="text-xs text-gray-400 mt-1">Private and visible only to you</p>
+              </div>
+
+              <div className="flex gap-2">
+                <button onClick={printNotes}
+                  className="flex-1 py-3 rounded-xl font-bold border text-sm"
+                  style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+                  🖨️ Print Notes
                 </button>
-              </>
-            )}
-          </div>
+                <button onClick={submitNotes}
+                  className="flex-1 py-3 rounded-xl text-white font-bold"
+                  style={{ backgroundColor: user.church.primaryColor }}>
+                  Submit (+50 pts)
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -545,6 +664,108 @@ function SundayScreen({ user }: { user: User }) {
   );
 }
 
+function SermonNotesEditor({ user }: { user: User }) {
+  const [sermon, setSermon] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('weekly_sermon').select('*')
+        .eq('church_id', user.church.id).maybeSingle();
+      if (data) setSermon(data);
+    })();
+  }, [user.church.id]);
+
+  async function save(published: boolean) {
+    if (!sermon) return;
+    setSaving(true);
+    await supabase.from('weekly_sermon').upsert({
+      ...sermon,
+      church_id: user.church.id,
+      published,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'church_id' });
+    setSaving(false);
+    alert(published ? 'Notes published to members!' : 'Notes saved as draft.');
+  }
+
+  if (!sermon) return (
+    <div className="p-3 rounded-xl bg-gray-50 text-center">
+      <p className="text-gray-400 text-xs">Generate content first to see sermon notes here.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3 p-3 rounded-xl border border-gray-100">
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sermon Title</label>
+        <input type="text" value={sermon.title || ''}
+          onChange={e => setSermon({ ...sermon, title: e.target.value })}
+          className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Scripture</label>
+        <input type="text" value={sermon.scripture || ''}
+          onChange={e => setSermon({ ...sermon, scripture: e.target.value })}
+          className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Fill in the Blanks</label>
+        {(sermon.blanks || []).map((b: any, i: number) => (
+          <div key={i} className="mb-2">
+            <input type="text" value={b.label || ''}
+              onChange={e => {
+                const updated = [...sermon.blanks];
+                updated[i] = { ...updated[i], label: e.target.value };
+                setSermon({ ...sermon, blanks: updated });
+              }}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+        ))}
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Open Ended Questions</label>
+        {(sermon.open_ended || []).map((q: string, i: number) => (
+          <div key={i} className="mb-2">
+            <input type="text" value={q}
+              onChange={e => {
+                const updated = [...sermon.open_ended];
+                updated[i] = e.target.value;
+                setSermon({ ...sermon, open_ended: updated });
+              }}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+        ))}
+      </div>
+      <div>
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Reflection Questions</label>
+        {(sermon.reflections || []).map((r: string, i: number) => (
+          <div key={i} className="mb-2">
+            <input type="text" value={r}
+              onChange={e => {
+                const updated = [...sermon.reflections];
+                updated[i] = e.target.value;
+                setSermon({ ...sermon, reflections: updated });
+              }}
+              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <button onClick={() => save(false)} disabled={saving}
+          className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">
+          Save Draft
+        </button>
+        <button onClick={() => save(true)} disabled={saving}
+          className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+          style={{ backgroundColor: user.church.primaryColor }}>
+          Publish Notes
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── AI Sermon Assistant ────────────────────────────────────────────────────
 function AISermonAssistant({ user }: { user: User }) {
   const [step, setStep] = useState<'theology' | 'input' | 'draft'>('theology');
@@ -575,15 +796,56 @@ function AISermonAssistant({ user }: { user: User }) {
   async function generate() {
     if (!outline.trim()) { alert('Please enter your sermon outline'); return; }
     setGenerating(true);
-    const sys = `You are a ministry content assistant for a church with the following profile:
+    const sys = `You are a ministry content assistant. Generate content for a church with these characteristics:
 Denomination: ${theology.denomination || 'Non-denominational'}
 Bible Translation: ${theology.bible_translation}
 Worship Style: ${theology.worship_style || 'Contemporary'}
 Statement of Faith: ${theology.statement_of_faith || 'Standard evangelical'}
 Theological Positions: ${theology.theological_positions || 'Standard evangelical'}
-NEVER generate content about: ${theology.restricted_topics || 'none specified'}
-Respond ONLY with valid JSON matching this exact structure, no other text:
-{"devotionals":[{"day":"Monday","title":"","scripture":"","body":"","reflection":""},{"day":"Tuesday","title":"","scripture":"","body":"","reflection":""},{"day":"Wednesday","title":"","scripture":"","body":"","reflection":""},{"day":"Thursday","title":"","scripture":"","body":"","reflection":""},{"day":"Friday","title":"","scripture":"","body":"","reflection":""}],"small_group_questions":["","","","",""],"challenge":{"title":"","type":"Streak","description":"","duration_days":7},"prayer_prompt":"","announcement":"","social_captions":{"short":"","medium":"","long":""}}`;
+NEVER include content about: ${theology.restricted_topics || 'none'}
+
+You MUST respond with ONLY a valid JSON object. No introduction, no explanation, no markdown, no code blocks. Just raw JSON.
+
+The JSON must follow this exact structure:
+{
+  "devotionals": [
+    {"day": "Monday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
+    {"day": "Tuesday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
+    {"day": "Wednesday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
+    {"day": "Thursday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
+    {"day": "Friday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"}
+  ],
+  "sermon_notes": {
+    "title": "string",
+    "scripture": "string",
+    "series": "string",
+    "blanks": [
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
+      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"}
+    ],
+    "open_ended": [
+      "open ended question about the sermon",
+      "open ended question about the sermon",
+      "open ended question about the sermon",
+      "open ended question about the sermon",
+      "open ended question about the sermon"
+    ],
+    "reflections": [
+      "deep personal reflection question",
+      "deep personal reflection question"
+    ]
+  },
+  "small_group_questions": ["string", "string", "string", "string", "string"],
+  "challenge": {"title": "string", "type": "Streak", "description": "string", "duration_days": 7},
+  "prayer_prompt": "string",
+  "announcement": "string",
+  "social_captions": {"short": "string", "medium": "string", "long": "string"}
+}`;
     try {
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -604,7 +866,14 @@ Respond ONLY with valid JSON matching this exact structure, no other text:
       const text = raw.content?.[0]?.text || '';
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
-        const p = JSON.parse(match[0]);
+        let p;
+        try {
+          p = JSON.parse(match[0]);
+        } catch {
+          alert('The AI returned content in an unexpected format. Please try again.');
+          setGenerating(false);
+          return;
+        }
         const nd: SermonDraft = {
           sermon_outline: outline,
           generated_devotionals: p.devotionals,
@@ -616,9 +885,24 @@ Respond ONLY with valid JSON matching this exact structure, no other text:
           admin_notes: '',
           status: 'draft',
         };
-        const { data: saved } = await supabase.from('sermon_drafts')
-          .insert({ church_id: user.church.id, created_by: user.id, ...nd })
-          .select().single();
+
+        if (p.sermon_notes) {
+          await supabase.from('weekly_sermon').upsert({
+            church_id: user.church.id,
+            title: p.sermon_notes.title,
+            scripture: p.sermon_notes.scripture,
+            series: p.sermon_notes.series,
+            blanks: p.sermon_notes.blanks,
+            open_ended: p.sermon_notes.open_ended,
+            reflections: p.sermon_notes.reflections,
+            published: false,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'church_id' });
+        }
+
+        const { data: saved } = await supabase.from('sermon_drafts').insert({
+          church_id: user.church.id, created_by: user.id, ...nd,
+        }).select().single();
         setDraft({ ...nd, id: saved?.id });
         setStep('draft');
       } else {
@@ -801,6 +1085,10 @@ Respond ONLY with valid JSON matching this exact structure, no other text:
               value={draft.admin_notes || ''}
               onChange={e => updateField('admin_notes', e.target.value)}
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-20" />
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Sunday Sermon Notes</p>
+            <SermonNotesEditor user={user} />
           </div>
 
           <div className="flex gap-2">
