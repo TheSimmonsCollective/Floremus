@@ -2251,6 +2251,228 @@ async function sendNotification() {
     </div>
   );
 }
+function GroupManager({ user }: { user: User }) {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [leaderId, setLeaderId] = useState('');
+
+  async function load() {
+    const { data: g } = await supabase.from('groups').select('*, profiles(full_name)')
+      .eq('church_id', user.church.id).order('created_at', { ascending: false });
+    if (g) setGroups(g);
+    const { data: m } = await supabase.from('profiles').select('id, full_name')
+      .eq('church_id', user.church.id).order('full_name', { ascending: true });
+    if (m) setMembers(m);
+  }
+
+  useEffect(() => { load(); }, [user.church.id]);
+
+  async function createGroup() {
+    if (!name.trim()) return;
+    await supabase.from('groups').insert({
+      church_id: user.church.id,
+      name,
+      description,
+      leader_id: leaderId || null,
+      member_count: 0,
+    });
+    setName(''); setDescription(''); setLeaderId(''); setAddOpen(false); load();
+  }
+
+  async function deleteGroup(id: string) {
+    if (!window.confirm('Delete this group?')) return;
+    await supabase.from('groups').delete().eq('id', id);
+    load();
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="font-bold text-gray-800">Small Groups</h3>
+        <button onClick={() => setAddOpen(!addOpen)}
+          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: user.church.primaryColor }}>+ Add Group</button>
+      </div>
+      {addOpen && (
+        <div className="p-3 rounded-xl border border-gray-200 space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Group Name</label>
+            <input type="text" placeholder="e.g. Men's Bible Study" value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Description (optional)</label>
+            <textarea placeholder="What is this group about?" value={description}
+              onChange={e => setDescription(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-16 resize-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Group Leader</label>
+            <select value={leaderId} onChange={e => setLeaderId(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+              <option value="">Select a leader</option>
+              {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={createGroup}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Create Group</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {groups.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-4">No groups yet. Create your first one.</p>
+        ) : groups.map((g, i) => (
+          <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
+            <div>
+              <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
+              <p className="text-xs text-gray-500">Leader: {g.profiles?.full_name || 'None assigned'}</p>
+              {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
+            </div>
+            <button onClick={() => deleteGroup(g.id)}
+              className="text-xs text-red-400 font-semibold">Delete</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChallengeManager({ user }: { user: User }) {
+  const [challenges, setChallenges] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ title: '', description: '', type: 'Streak', points: '100', total_days: '7' });
+
+  async function load() {
+    const { data } = await supabase.from('challenges').select('*')
+      .eq('church_id', user.church.id).order('created_at', { ascending: false });
+    if (data) setChallenges(data);
+  }
+
+  useEffect(() => { load(); }, [user.church.id]);
+
+  async function createChallenge() {
+    if (!form.title.trim()) return;
+    await supabase.from('challenges').insert({
+      church_id: user.church.id,
+      title: form.title,
+      description: form.description,
+      type: form.type,
+      points: parseInt(form.points),
+      total_days: parseInt(form.total_days),
+      is_active: true,
+    });
+    setForm({ title: '', description: '', type: 'Streak', points: '100', total_days: '7' });
+    setAddOpen(false); load();
+  }
+
+  async function toggleChallenge(id: string, isActive: boolean) {
+    await supabase.from('challenges').update({ is_active: !isActive }).eq('id', id);
+    load();
+  }
+
+  async function deleteChallenge(id: string) {
+    if (!window.confirm('Delete this challenge?')) return;
+    await supabase.from('challenges').delete().eq('id', id);
+    load();
+  }
+
+  return (
+    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="font-bold text-gray-800">Challenges</h3>
+        <button onClick={() => setAddOpen(!addOpen)}
+          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+          style={{ backgroundColor: user.church.primaryColor }}>+ Add Challenge</button>
+      </div>
+      {addOpen && (
+        <div className="p-3 rounded-xl border border-gray-200 space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
+            <input type="text" placeholder="e.g. 7 Day Prayer Challenge" value={form.title}
+              onChange={e => setForm({ ...form, title: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</label>
+            <textarea placeholder="Describe the challenge..." value={form.description}
+              onChange={e => setForm({ ...form, description: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-16 resize-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</label>
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                <option value="Streak">Streak</option>
+                <option value="Achievement">Achievement</option>
+                <option value="Community">Community</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Points</label>
+              <input type="number" value={form.points}
+                onChange={e => setForm({ ...form, points: e.target.value })}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            </div>
+          </div>
+          {form.type === 'Streak' && (
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration (days)</label>
+              <input type="number" value={form.total_days}
+                onChange={e => setForm({ ...form, total_days: e.target.value })}
+                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={createChallenge}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Create Challenge</button>
+          </div>
+        </div>
+      )}
+      <div className="space-y-2">
+        {challenges.length === 0 ? (
+          <p className="text-gray-400 text-sm text-center py-4">No challenges yet. Create your first one.</p>
+        ) : challenges.map((c, i) => (
+          <div key={i} className="p-3 rounded-xl border border-gray-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-semibold text-gray-800 text-sm">{c.title}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs px-2 py-0.5 rounded-full text-white"
+                    style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
+                  <span className="text-xs text-gray-500">{c.points} pts</span>
+                  {c.total_days && <span className="text-xs text-gray-500">{c.total_days} days</span>}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => toggleChallenge(c.id, c.is_active)}
+                  className="text-xs px-2 py-1 rounded-lg"
+                  style={{ backgroundColor: c.is_active ? '#F0FFF4' : '#FFF5F5', color: c.is_active ? '#166534' : '#991B1B' }}>
+                  {c.is_active ? 'Active' : 'Inactive'}
+                </button>
+                <button onClick={() => deleteChallenge(c.id)}
+                  className="text-xs text-red-400 font-semibold">Delete</button>
+              </div>
+            </div>
+            {c.description && <p className="text-xs text-gray-400 mt-1">{c.description}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [tab, setTab] = useState('overview');
@@ -2310,7 +2532,7 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
     }
   }
 
-const adminTabs = ['overview', 'branding', 'points', 'notifications', ...(isSA ? ['members'] : [])];
+const adminTabs = ['overview', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];
 
   return (
     <div className="space-y-4">
@@ -2485,6 +2707,13 @@ const adminTabs = ['overview', 'branding', 'points', 'notifications', ...(isSA ?
       )}
 {tab === 'notifications' && (
         <NotificationSender user={user} />
+      )}
+{tab === 'groups' && (
+        <GroupManager user={user} />
+      )}
+
+      {tab === 'challenges' && (
+        <ChallengeManager user={user} />
       )}
 
       {tab === 'members' && isSA && (
