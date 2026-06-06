@@ -552,13 +552,24 @@ function SundayScreen({ user }: { user: User }) {
             </div>
           ) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-              {!sermon && (
+
+              {sermon?.key_scriptures?.length > 0 ? (
+                <div className="space-y-2">
+                  {sermon.key_scriptures.map((s: any, i: number) => (
+                    <div key={i} className="rounded-xl p-3 border-l-4"
+                      style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
+                      <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>{s.reference}</p>
+                      <p className="text-gray-800 text-sm italic">"{s.text}"</p>
+                    </div>
+                  ))}
+                </div>
+              ) : !sermon ? (
                 <div className="rounded-xl p-3 border-l-4"
                   style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
                   <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
                   <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." — Galatians 5:16</p>
                 </div>
-              )}
+              ) : null}
 
               {sermon?.blanks?.length > 0 && (
                 <div>
@@ -819,6 +830,11 @@ The JSON must follow this exact structure:
     "title": "string",
     "scripture": "string",
     "series": "string",
+       "key_scriptures": [
+      {"reference": "Book Chapter:Verse", "text": "Full verse text here"},
+      {"reference": "Book Chapter:Verse", "text": "Full verse text here"},
+      {"reference": "Book Chapter:Verse", "text": "Full verse text here"}
+    ],
     "blanks": [
       {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
       {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
@@ -888,20 +904,7 @@ model: 'claude-sonnet-4-5',
           status: 'draft',
         };
 
-        if (p.sermon_notes) {
-          await supabase.from('weekly_sermon').upsert({
-            church_id: user.church.id,
-            title: p.sermon_notes.title,
-            scripture: p.sermon_notes.scripture,
-            series: p.sermon_notes.series,
-            blanks: p.sermon_notes.blanks,
-            open_ended: p.sermon_notes.open_ended,
-            reflections: p.sermon_notes.reflections,
-            published: false,
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'church_id' });
-        }
-
+        
         const { data: saved } = await supabase.from('sermon_drafts').insert({
           church_id: user.church.id, created_by: user.id, ...nd,
         }).select().single();
