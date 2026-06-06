@@ -856,14 +856,16 @@ The JSON must follow this exact structure:
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
+model: 'claude-sonnet-4-5',
           max_tokens: 4000,
           system: sys,
           messages: [{ role: 'user', content: `Generate ministry content for this sermon:\n\n${outline}` }],
         }),
       });
-      const raw = await res.json();
+     const raw = await res.json();
+      console.log('Full API response:', JSON.stringify(raw));
       const text = raw.content?.[0]?.text || '';
+      console.log('AI Response:', text);
       const match = text.match(/\{[\s\S]*\}/);
       if (match) {
         let p;
@@ -1015,15 +1017,15 @@ The JSON must follow this exact structure:
             {(draft.generated_devotionals || []).map((dv: any, i: number) => (
               <div key={i} className="mb-3 p-3 rounded-xl border border-gray-100">
                 <p className="text-xs font-bold mb-1" style={{ color: user.church.primaryColor }}>{dv.day}</p>
-                <input type="text" value={dv.title || ''}
-                  onChange={e => {
+                <input type="text" defaultValue={dv.title || ''}
+                  onBlur={e => {
                     const u = [...(draft.generated_devotionals || [])];
                     u[i] = { ...u[i], title: e.target.value };
                     updateField('generated_devotionals', u);
                   }}
                   className="w-full font-semibold text-gray-800 text-sm border-0 focus:outline-none" />
-                <textarea value={dv.body || ''}
-                  onChange={e => {
+                <textarea defaultValue={dv.body || ''}
+                  onBlur={e => {
                     const u = [...(draft.generated_devotionals || [])];
                     u[i] = { ...u[i], body: e.target.value };
                     updateField('generated_devotionals', u);
@@ -1038,8 +1040,8 @@ The JSON must follow this exact structure:
             {(draft.generated_questions || []).map((q: string, i: number) => (
               <div key={i} className="flex gap-2 mb-2">
                 <span className="text-xs text-gray-400 mt-2 flex-shrink-0">{i + 1}.</span>
-                <input type="text" value={q}
-                  onChange={e => {
+                <input type="text" defaultValue={q}
+                  onBlur={e => {
                     const u = [...(draft.generated_questions || [])];
                     u[i] = e.target.value;
                     updateField('generated_questions', u);
@@ -1057,8 +1059,8 @@ The JSON must follow this exact structure:
               {Object.entries(draft.generated_social).map(([key, val]) => (
                 <div key={key} className="mb-2">
                   <p className="text-xs text-gray-400 capitalize mb-1">{key}:</p>
-                  <textarea value={val as string}
-                    onChange={e => updateField('generated_social', { ...draft.generated_social, [key]: e.target.value })}
+                  <textarea defaultValue={val as string}
+                    onBlur={e => updateField('generated_social', { ...draft.generated_social, [key]: e.target.value })}
                     className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
                 </div>
               ))}
@@ -1067,23 +1069,23 @@ The JSON must follow this exact structure:
 
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Prayer Prompt</p>
-            <textarea value={draft.generated_prayer || ''}
-              onChange={e => updateField('generated_prayer', e.target.value)}
+           <textarea defaultValue={draft.generated_prayer || ''}
+              onBlur={e => updateField('generated_prayer', e.target.value)}
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
           </div>
 
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Announcement</p>
-            <textarea value={draft.generated_announcement || ''}
-              onChange={e => updateField('generated_announcement', e.target.value)}
+          <textarea defaultValue={draft.generated_announcement || ''}
+              onBlur={e => updateField('generated_announcement', e.target.value)}
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
           </div>
 
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Personal Notes</p>
-            <textarea placeholder="Add notes, reminders, or additional context..."
-              value={draft.admin_notes || ''}
-              onChange={e => updateField('admin_notes', e.target.value)}
+            <textarea defaultValue={draft.admin_notes || ''}
+              onBlur={e => updateField('admin_notes', e.target.value)}
+              placeholder="Add notes, reminders, or additional context..."
               className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-20" />
           </div>
           <div>
