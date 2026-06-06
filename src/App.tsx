@@ -2258,9 +2258,11 @@ function GroupManager({ user }: { user: User }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [leaderId, setLeaderId] = useState('');
+  const [leaderId2, setLeaderId2] = useState('');
 
   async function load() {
-    const { data: g } = await supabase.from('groups').select('*, profiles(full_name)')
+    const { data: g } = await supabase.from('groups')
+      .select('*, profiles!groups_leader_id_fkey(full_name), leader2:profiles!groups_leader_id_2_fkey(full_name)')
       .eq('church_id', user.church.id).order('created_at', { ascending: false });
     if (g) setGroups(g);
     const { data: m } = await supabase.from('profiles').select('id, full_name')
@@ -2277,9 +2279,10 @@ function GroupManager({ user }: { user: User }) {
       name,
       description,
       leader_id: leaderId || null,
+      leader_id_2: leaderId2 || null,
       member_count: 0,
     });
-    setName(''); setDescription(''); setLeaderId(''); setAddOpen(false); load();
+    setName(''); setDescription(''); setLeaderId(''); setLeaderId2(''); setAddOpen(false); load();
   }
 
   async function deleteGroup(id: string) {
@@ -2311,10 +2314,18 @@ function GroupManager({ user }: { user: User }) {
               className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-16 resize-none" />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Group Leader</label>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Leader 1</label>
             <select value={leaderId} onChange={e => setLeaderId(e.target.value)}
               className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
               <option value="">Select a leader</option>
+              {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Leader 2 (optional)</label>
+            <select value={leaderId2} onChange={e => setLeaderId2(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+              <option value="">Select a second leader</option>
               {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
             </select>
           </div>
@@ -2334,8 +2345,7 @@ function GroupManager({ user }: { user: User }) {
           <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
             <div>
               <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
-              <p className="text-xs text-gray-500">Leader: {g.profiles?.full_name || 'None assigned'}</p>
-              {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
+<p className="text-xs text-gray-500">Leader 1: {g.profiles?.full_name || 'None'} · Leader 2: {g.leader2?.full_name || 'None'}</p>              {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
             </div>
             <button onClick={() => deleteGroup(g.id)}
               className="text-xs text-red-400 font-semibold">Delete</button>
