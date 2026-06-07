@@ -65,12 +65,10 @@ interface GivingFund {
 }
 
 interface TheologySettings {
-  denomination: string;
-  statement_of_faith: string;
-  bible_translation: string;
-  worship_style: string;
-  theological_positions: string;
-  restricted_topics: string;
+  denomination: string; statement_of_faith: string;
+  bible_translation: string; worship_style: string;
+  theological_positions: string; restricted_topics: string;
+  translation_1: string; translation_2: string; translation_3: string;
 }
 
 interface SermonDraft {
@@ -781,8 +779,9 @@ function SermonNotesEditor({ user }: { user: User }) {
 function AISermonAssistant({ user }: { user: User }) {
   const [step, setStep] = useState<'theology' | 'input' | 'draft'>('theology');
   const [theology, setTheology] = useState<TheologySettings>({
-    denomination: '', statement_of_faith: '', bible_translation: 'NIV',
+    denomination: '', statement_of_faith: '', bible_translation: 'KJV',
     worship_style: '', theological_positions: '', restricted_topics: '',
+    translation_1: 'KJV', translation_2: '', translation_3: '',
   });
   const [outline, setOutline] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -942,7 +941,6 @@ model: 'claude-sonnet-4-5',
 
   const theologyFields = [
     { label: 'Denomination', key: 'denomination', ph: 'e.g. Pentecostal, Baptist, Non-denominational', ta: false },
-    { label: 'Bible Translation', key: 'bible_translation', ph: 'e.g. NIV, KJV, ESV, NKJV', ta: false },
     { label: 'Worship Style', key: 'worship_style', ph: 'e.g. Contemporary, Traditional, Blended', ta: false },
     { label: 'Statement of Faith', key: 'statement_of_faith', ph: 'Brief summary of your core beliefs...', ta: true },
     { label: 'Key Theological Positions', key: 'theological_positions', ph: 'Doctrinal positions the AI should reflect...', ta: true },
@@ -969,6 +967,27 @@ model: 'claude-sonnet-4-5',
               )}
             </div>
           ))}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bible Translations (up to 3)</label>
+            <p className="text-xs text-gray-400 mb-2">Each selected translation will appear on Sunday notes.</p>
+            {[
+              { label: 'Translation 1', key: 'translation_1' },
+              { label: 'Translation 2 (optional)', key: 'translation_2' },
+              { label: 'Translation 3 (optional)', key: 'translation_3' },
+            ].map((f, i) => (
+              <div key={i} className="mb-2">
+                <label className="text-xs text-gray-400">{f.label}</label>
+                <select value={(theology as any)[f.key]}
+                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                  <option value="">None</option>
+                  {['KJV','NKJV','NIV','ESV','NLT','AMP','NASB','CSB','MSG','NCV','HCSB','RSV','NRSV','TLB','GNT','NET','WEB','ASV','YLT','DBY'].map(t => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
           <button onClick={saveTheology}
             className="w-full py-3 rounded-xl text-white font-bold"
             style={{ backgroundColor: user.church.primaryColor }}>
