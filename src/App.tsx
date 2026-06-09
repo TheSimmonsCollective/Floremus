@@ -1442,7 +1442,7 @@ function GroupsScreen({ user }: { user: User }) {
   useEffect(() => {
     (async () => {
       const { data: g } = await supabase.from('groups')
-        .select('*, profiles(full_name)')
+        .select('*')
         .eq('church_id', user.church.id).order('created_at', { ascending: false });
       if (g) setGroups(g);
       const { data: lb } = await supabase.from('profiles')
