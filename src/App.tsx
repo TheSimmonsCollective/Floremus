@@ -69,6 +69,7 @@ interface TheologySettings {
   bible_translation: string; worship_style: string;
   theological_positions: string; restricted_topics: string;
   translation_1: string; translation_2: string; translation_3: string;
+  writing_tone: string;
 }
 
 interface SermonDraft {
@@ -573,7 +574,7 @@ function SundayScreen({ user }: { user: User }) {
 
               {sermon?.blanks?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Fill in the Blanks</p>
+<p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Fill in the Blanks</p>
                   {sermon.blanks.map((b: any, i: number) => (
                     <div key={i} className="mb-3">
                       <p className="text-sm text-gray-700 mb-1">{b.label}</p>
@@ -588,7 +589,7 @@ function SundayScreen({ user }: { user: User }) {
 
               {sermon?.open_ended?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Questions</p>
+                  <p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Questions</p>
                   {sermon.open_ended.map((q: string, i: number) => (
                     <div key={i} className="mb-3">
                       <p className="text-sm text-gray-700 mb-1">{q}</p>
@@ -603,7 +604,7 @@ function SundayScreen({ user }: { user: User }) {
 
               {sermon?.reflections?.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Reflections</p>
+<p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Reflections</p>
                   {sermon.reflections.map((r: string, i: number) => (
                     <div key={i} className="mb-3">
                       <p className="text-sm text-gray-700 mb-1">{r}</p>
@@ -617,7 +618,7 @@ function SundayScreen({ user }: { user: User }) {
               )}
 
               <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">My Private Notes</p>
+<p className="text-sm font-bold uppercase tracking-wide mb-2" style={{ color: user.church.primaryColor }}>My Private Notes</p>
                 <textarea placeholder="Personal notes just for you. These are never shared..."
                   value={privateNotes}
                   onChange={e => setPrivateNotes(e.target.value)}
@@ -784,6 +785,7 @@ function AISermonAssistant({ user }: { user: User }) {
     denomination: '', statement_of_faith: '', bible_translation: 'KJV',
     worship_style: '', theological_positions: '', restricted_topics: '',
     translation_1: 'KJV', translation_2: '', translation_3: '',
+    writing_tone: 'Conversational',
   });
   const [outline, setOutline] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -814,8 +816,9 @@ Bible Translation: ${theology.bible_translation}
 Worship Style: ${theology.worship_style || 'Contemporary'}
 Statement of Faith: ${theology.statement_of_faith || 'Standard evangelical'}
 Theological Positions: ${theology.theological_positions || 'Standard evangelical'}
-NEVER include content about: ${theology.restricted_topics || 'none'}
-
+NEVER generate content about: ${theology.restricted_topics || 'none specified'}
+Writing Tone: ${theology.writing_tone || 'Conversational'}
+NEVER use em dashes (—) in any generated content. Use commas, periods, or rewrite the sentence instead.
 You MUST respond with ONLY a valid JSON object. No introduction, no explanation, no markdown, no code blocks. Just raw JSON.
 
 The JSON must follow this exact structure:
@@ -880,10 +883,14 @@ model: 'claude-sonnet-4-5',
         }),
       });
      const raw = await res.json();
-      console.log('Full API response:', JSON.stringify(raw));
       const text = raw.content?.[0]?.text || '';
-      console.log('AI Response:', text);
-      const match = text.match(/\{[\s\S]*\}/);
+      
+const cleaned = text
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/```\s*$/i, '')
+        .trim();
+      const match = cleaned.match(/\{[\s\S]*\}/);
       if (match) {
         let p;
         try {
@@ -926,22 +933,25 @@ model: 'claude-sonnet-4-5',
     setDraft(prev => prev ? { ...prev, [field]: value } : null);
   }
 
-  async function publish() {
+async function publish() {
     if (!draft?.id) return;
     await supabase.from('sermon_drafts').update({ status: 'published' }).eq('id', draft.id);
     if (draft.generated_devotionals) {
+      console.log('Devotionals to save:', JSON.stringify(draft.generated_devotionals));
       for (const d of draft.generated_devotionals) {
-        await supabase.from('devotionals').insert({
+        console.log('Saving devotional:', d);
+        const { error } = await supabase.from('devotionals').insert({
           church_id: user.church.id, author_id: user.id,
           title: d.title, scripture: d.scripture, body: d.body, day_of_week: d.day,
         });
+        if (error) console.log('Insert error:', error);
       }
     }
     alert('Content published!');
     setStep('input'); setDraft(null); setOutline('');
   }
 
-  const theologyFields = [
+ const theologyFields = [
     { label: 'Denomination', key: 'denomination', ph: 'e.g. Pentecostal, Baptist, Non-denominational', ta: false },
     { label: 'Worship Style', key: 'worship_style', ph: 'e.g. Contemporary, Traditional, Blended', ta: false },
     { label: 'Statement of Faith', key: 'statement_of_faith', ph: 'Brief summary of your core beliefs...', ta: true },
@@ -969,6 +979,17 @@ model: 'claude-sonnet-4-5',
               )}
             </div>
           ))}
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Writing Tone</label>
+            <p className="text-xs text-gray-400 mb-2">How should the AI write content for your church?</p>
+            <select value={theology.writing_tone}
+              onChange={e => setTheology({ ...theology, writing_tone: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+              {['Expository','Conversational','Prophetic','Teaching','Evangelistic','Devotional','Encouraging'].map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+          </div>
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bible Translations (up to 3)</label>
             <p className="text-xs text-gray-400 mb-2">Each selected translation will appear on Sunday notes.</p>
@@ -1131,6 +1152,89 @@ model: 'claude-sonnet-4-5',
           </div>
         </div>
       )}
+    </div>
+  );
+}
+function DevotionalAccordion({ user, devotionals }: { user: User; devotionals: any[] }) {
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const [read, setRead] = useState<Record<string, boolean>>({});
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const today = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+
+  const byDay = days.reduce((acc: Record<string, any>, day) => {
+    const dv = devotionals.find(d => d.day_of_week === day);
+    if (dv) acc[day] = dv;
+    return acc;
+  }, {});
+
+  if (devotionals.length === 0) return (
+    <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+      <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
+    </div>
+  );
+
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-gray-400 text-center mb-2">Tap a day to read</p>
+      {days.filter(day => byDay[day]).map((day, i) => {
+        const dv = byDay[day];
+        const isOpen = openDay === day;
+        const isToday = day === today;
+        const isRead = read[day];
+        return (
+          <div key={i} className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <button onClick={() => setOpenDay(isOpen ? null : day)}
+              className="w-full flex items-center justify-between p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                  style={{ backgroundColor: isRead ? '#4ade80' : isToday ? user.church.primaryColor : '#E5E7EB', color: isRead || isToday ? BRAND.white : '#6B7280' }}>
+                  {isRead ? '✓' : day.slice(0, 2)}
+                </div>
+                <div className="text-left">
+                  <p className="font-bold text-gray-800 text-sm">{day}</p>
+                  <p className="text-xs text-gray-500">{dv.title}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {isToday && !isRead && (
+                  <span className="text-xs px-2 py-0.5 rounded-full text-white font-semibold"
+                    style={{ backgroundColor: user.church.primaryColor }}>Today</span>
+                )}
+                <span className="text-gray-400 text-lg">{isOpen ? '∧' : '∨'}</span>
+              </div>
+            </button>
+            {isOpen && (
+              <div className="px-4 pb-4 border-t border-gray-50">
+                <div className="mt-3 mb-3 p-3 rounded-xl border-l-4"
+                  style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
+                  <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>SCRIPTURE</p>
+                  <p className="text-gray-700 text-sm italic">{dv.scripture}</p>
+                </div>
+                <p className="text-gray-700 text-sm leading-relaxed mb-4">{dv.body}</p>
+                {dv.reflection && (
+                  <div className="p-3 rounded-xl bg-gray-50 mb-4">
+                    <p className="text-xs font-semibold text-gray-500 mb-1">REFLECT</p>
+                    <p className="text-gray-600 text-sm italic">{dv.reflection}</p>
+                  </div>
+                )}
+                {!isRead && (
+                  <button onClick={async () => {
+                    await supabase.from('profiles').update({ points: user.points + 20 }).eq('id', user.id);
+                    setRead({ ...read, [day]: true });
+                    setOpenDay(null);
+                  }} className="w-full py-3 rounded-xl text-white text-sm font-semibold"
+                    style={{ backgroundColor: user.church.primaryColor }}>
+                    Mark as Read (+20 pts)
+                  </button>
+                )}
+                {isRead && (
+                  <p className="text-center text-green-600 text-sm font-semibold">✓ Completed</p>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1302,31 +1406,8 @@ function CommunityScreen({ user }: { user: User }) {
         </div>
       )}
 
-      {tab === 'devotional' && (
-        <div className="space-y-3">
-          {devotionals.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-              <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
-            </div>
-          ) : devotionals.map((dv, i) => (
-            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xs px-2 py-1 rounded-full text-white font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>{dv.day_of_week}</span>
-                <p className="text-xs text-gray-500">{dv.scripture}</p>
-              </div>
-              <h3 className="font-bold text-gray-800 mb-2">{dv.title}</h3>
-              <p className="text-gray-600 text-sm leading-relaxed">{dv.body}</p>
-              <button onClick={async () => {
-                await supabase.from('profiles').update({ points: user.points + 20 }).eq('id', user.id);
-                alert('+20 points earned!');
-              }} className="mt-3 w-full py-2 rounded-xl text-white text-sm font-semibold"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                Mark as Read (+20 pts)
-              </button>
-            </div>
-          ))}
-        </div>
+     {tab === 'devotional' && (
+        <DevotionalAccordion user={user} devotionals={devotionals} />
       )}
 
       {tab === 'chat' && (
