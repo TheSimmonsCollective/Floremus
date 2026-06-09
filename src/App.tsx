@@ -874,7 +874,7 @@ Return ONLY this JSON structure:
           system: `${baseContext}
 Bible Translations to use: ${translationsStr}
 Return ONLY this JSON structure. Fill in ALL fields. For key_scriptures provide the actual verse text for each translation:
-{"sermon_notes":{"title":"","scripture":"","series":"","blanks":[{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""}],"open_ended":["","","","",""],"reflections":["",""]},"key_scriptures":[{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]}]}`,
+{"sermon_notes":{"title":"","scripture":"","series":"","blanks":[{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""}],"open_ended":["","",""],"reflections":["",""]},"key_scriptures":[{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]}]}`,
           messages: [{ role: 'user', content: `Generate sermon notes and key scriptures for this sermon:\n\n${outline}` }],
         }),
       });
