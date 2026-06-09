@@ -557,15 +557,18 @@ function SundayScreen({ user }: { user: User }) {
              {sermon?.key_scriptures?.length > 0 ? (
                 <div className="space-y-3">
                   {sermon.key_scriptures.map((s: any, i: number) => (
-                    <div key={i} className="rounded-xl p-3 border-l-4"
+                    <div key={i} className="rounded-xl p-4 border-l-4"
                       style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                      <p className="text-xs font-semibold mb-2" style={{ color: user.church.primaryColor }}>{s.reference}</p>
+                      <p className="text-sm font-bold mb-3" style={{ color: user.church.primaryColor }}>{s.reference}</p>
                       {s.versions ? (
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           {s.versions.map((v: any, j: number) => (
-                            <div key={j}>
-                              <p className="text-xs font-bold text-gray-400 mb-0.5">{v.translation}</p>
-                              <p className="text-gray-800 text-sm italic">"{v.text}"</p>
+                            <div key={j} className="pt-2 border-t border-purple-100 first:border-0 first:pt-0">
+                              <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white mb-1 inline-block"
+                                style={{ backgroundColor: user.church.primaryColor, opacity: 0.7 }}>
+                                {v.translation}
+                              </span>
+                              <p className="text-gray-700 text-sm italic leading-relaxed mt-1">"{v.text}"</p>
                             </div>
                           ))}
                         </div>
