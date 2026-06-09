@@ -1694,6 +1694,7 @@ const back = () => { setSub('menu'); onSubChange?.('menu'); };
     { icon: '📣', label: 'Announcements', tab: 'ann' },
     { icon: '📍', label: 'Check In', tab: 'checkin' },
     { icon: '👶', label: "Children's Check-In", tab: 'children' },
+    { icon: '💬', label: 'Message Admin', tab: 'dm' },
     { icon: '⚙️', label: 'My Profile', tab: 'profile' },
     ...(isAdmin ? [
       { icon: '🔧', label: 'Admin Panel', tab: 'admin' },
@@ -1736,6 +1737,7 @@ const back = () => { setSub('menu'); onSubChange?.('menu'); };
       {sub === 'profile' && <ProfileScreen user={user} onBack={back} />}
       {sub === 'admin' && <AdminScreen user={user} onBack={back} />}
       {sub === 'pricing' && <PricingScreen user={user} onBack={back} />}
+      {sub === 'dm' && <DirectMessageScreen user={user} onBack={back} />}
     </div>
   );
 }
@@ -3329,6 +3331,128 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+function DirectMessageScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const [msgs, setMsgs] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [selMember, setSelMember] = useState<any>(null);
+  const [text, setText] = useState('');
+  const endRef = useRef<HTMLDivElement>(null);
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  useEffect(() => {
+    if (isAdmin) {
+      (async () => {
+        const { data } = await supabase.from('profiles').select('id, full_name, avatar_url')
+          .eq('church_id', user.church.id)
+          .not('role', 'in', '("admin","super_admin")')
+          .order('full_name', { ascending: true });
+        if (data) setMembers(data);
+      })();
+    } else {
+      loadMessages(user.id);
+    }
+  }, [user.church.id]);
+
+  async function loadMessages(memberId: string) {
+    const { data } = await supabase.from('direct_messages').select('*, profiles!direct_messages_author_id_fkey(full_name, avatar_url)')
+      .eq('church_id', user.church.id)
+      .eq('member_id', memberId)
+      .order('created_at', { ascending: true });
+    if (data) setMsgs(data);
+    setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+  }
+
+  async function send() {
+    if (!text.trim()) return;
+    const memberId = isAdmin ? selMember?.id : user.id;
+    await supabase.from('direct_messages').insert({
+      church_id: user.church.id,
+      member_id: memberId,
+      author_id: user.id,
+      content: text,
+      is_from_admin: isAdmin,
+    });
+    setText('');
+    loadMessages(memberId);
+  }
+
+  if (isAdmin && !selMember) return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">Member Messages</h2>
+      </div>
+      <div className="space-y-2">
+        {members.length === 0 ? (
+          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-gray-400 text-sm">No members yet.</p>
+          </div>
+        ) : members.map((m, i) => (
+          <button key={i} onClick={() => { setSelMember(m); loadMessages(m.id); }}
+            className="w-full bg-white rounded-2xl p-4 shadow-sm flex items-center gap-3 text-left">
+            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={40} color={user.church.primaryColor} />
+            <div className="flex-1">
+              <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Member'}</p>
+              <p className="text-xs text-gray-400">Tap to view messages</p>
+            </div>
+            <span className="text-gray-400">›</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <button onClick={() => isAdmin ? setSelMember(null) : onBack()} className="text-gray-400 text-xl">‹</button>
+        <h2 className="font-bold text-gray-800 text-lg">
+          {isAdmin ? selMember?.full_name : 'Message Admin Team'}
+        </h2>
+      </div>
+      {!isAdmin && (
+        <div className="rounded-xl p-3 bg-blue-50 border border-blue-100">
+          <p className="text-xs text-blue-600">Your messages are private and only visible to church admins.</p>
+        </div>
+      )}
+      <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '60vh' }}>
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {msgs.length === 0 && (
+            <div className="text-center py-8">
+              <p className="text-gray-400 text-sm">No messages yet. Start the conversation.</p>
+            </div>
+          )}
+          {msgs.map((m, i) => {
+            const own = m.author_id === user.id;
+            return (
+              <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
+                {!own && <Avatar url={m.profiles?.avatar_url} name={m.profiles?.full_name || 'Admin'} size={28} color={user.church.primaryColor} />}
+                <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+                  {!own && <p className="text-xs text-gray-400 mb-1">{m.profiles?.full_name || 'Admin'}</p>}
+                  <div className="px-3 py-2 rounded-2xl text-sm"
+                    style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
+                    {m.content}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                </div>
+              </div>
+            );
+          })}
+          <div ref={endRef} />
+        </div>
+        <div className="p-3 border-t border-gray-100 flex gap-2">
+          <input type="text" placeholder="Type a message..." value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') send(); }}
+            className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <button onClick={send}
+            className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
+            style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+        </div>
+      </div>
     </div>
   );
 }
