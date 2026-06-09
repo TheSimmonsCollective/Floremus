@@ -3030,6 +3030,123 @@ function ChallengeManager({ user }: { user: User }) {
     </div>
   );
 }
+function DevotionalManager({ user }: { user: User }) {
+  const [devotionals, setDevotionals] = useState<any[]>([]);
+  const [addOpen, setAddOpen] = useState(false);
+  const [form, setForm] = useState({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+  async function load() {
+    const { data } = await supabase.from('devotionals').select('*')
+      .eq('church_id', user.church.id)
+      .order('created_at', { ascending: false }).limit(20);
+    if (data) setDevotionals(data);
+  }
+
+  useEffect(() => { load(); }, [user.church.id]);
+
+  async function save() {
+    if (!form.title.trim() || !form.body.trim()) { alert('Title and body are required'); return; }
+    await supabase.from('devotionals').insert({
+      church_id: user.church.id,
+      author_id: user.id,
+      day_of_week: form.day_of_week,
+      title: form.title,
+      scripture: form.scripture,
+      body: form.body,
+      reflection: form.reflection,
+    });
+    setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
+    setAddOpen(false);
+    load();
+  }
+
+  async function remove(id: string) {
+    if (!window.confirm('Delete this devotional?')) return;
+    await supabase.from('devotionals').delete().eq('id', id);
+    load();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl p-4 shadow-sm">
+        <div className="flex justify-between items-center mb-1">
+          <h3 className="font-bold text-gray-800">Devotionals</h3>
+          <button onClick={() => setAddOpen(!addOpen)}
+            className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+            style={{ backgroundColor: user.church.primaryColor }}>+ Add</button>
+        </div>
+        <p className="text-xs text-gray-400">Post devotionals directly without using the AI assistant.</p>
+      </div>
+
+      {addOpen && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Day of Week</label>
+            <select value={form.day_of_week} onChange={e => setForm({ ...form, day_of_week: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+              {days.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
+            <input type="text" placeholder="Devotional title" value={form.title}
+              onChange={e => setForm({ ...form, title: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Scripture</label>
+            <input type="text" placeholder="e.g. John 3:16" value={form.scripture}
+              onChange={e => setForm({ ...form, scripture: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Body</label>
+            <textarea placeholder="Write the devotional content..." value={form.body}
+              onChange={e => setForm({ ...form, body: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-32 resize-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Reflection Question (optional)</label>
+            <input type="text" placeholder="e.g. How will you apply this today?" value={form.reflection}
+              onChange={e => setForm({ ...form, reflection: e.target.value })}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setAddOpen(false)}
+              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
+            <button onClick={save}
+              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>Post Devotional</button>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {devotionals.length === 0 ? (
+          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
+            <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
+          </div>
+        ) : devotionals.map((dv, i) => (
+          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+            <div className="flex justify-between items-start">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs px-2 py-0.5 rounded-full text-white font-semibold"
+                    style={{ backgroundColor: user.church.primaryColor }}>{dv.day_of_week}</span>
+                </div>
+                <p className="font-bold text-gray-800 text-sm">{dv.title}</p>
+                {dv.scripture && <p className="text-xs text-gray-500 mt-0.5 italic">{dv.scripture}</p>}
+                <p className="text-gray-600 text-xs mt-1 line-clamp-2">{dv.body}</p>
+              </div>
+              <button onClick={() => remove(dv.id)} className="text-xs text-red-400 font-semibold ml-3">Delete</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 function PublishedContentViewer({ user }: { user: User }) {
   const [draft, setDraft] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -3207,8 +3324,7 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
     }
   }
 
-  const adminTabs = ['overview', 'content', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];
-  return (
+const adminTabs = ['overview', 'content', 'devotionals', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];  return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
@@ -3381,6 +3497,9 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
       )}
       {tab === 'content' && (
         <PublishedContentViewer user={user} />
+      )}
+      {tab === 'devotionals' && (
+        <DevotionalManager user={user} />
       )}
 {tab === 'notifications' && (
         <NotificationSender user={user} />
