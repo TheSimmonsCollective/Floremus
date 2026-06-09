@@ -530,10 +530,12 @@ function SundayScreen({ user }: { user: User }) {
       {tab === 'notes' && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm">
-            <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {sermon?.series || 'SERIES'}
-            </span>
+            {sermon?.series && (
+              <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
+                style={{ backgroundColor: user.church.primaryColor }}>
+                {sermon.series}
+              </span>
+            )}
             <h2 className="text-xl font-bold text-gray-800 mt-2">{sermon?.title || 'Sermon Notes'}</h2>
             <p className="text-gray-500 text-sm">{sermon?.scripture || ''}</p>
           </div>
