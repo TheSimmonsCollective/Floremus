@@ -2878,6 +2878,124 @@ function ChallengeManager({ user }: { user: User }) {
     </div>
   );
 }
+function PublishedContentViewer({ user }: { user: User }) {
+  const [draft, setDraft] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [copied, setCopied] = useState('');
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('sermon_drafts').select('*')
+        .eq('church_id', user.church.id).eq('status', 'published')
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (data) setDraft(data);
+      setLoading(false);
+    })();
+  }, [user.church.id]);
+
+  async function copy(text: string, key: string) {
+    await navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(''), 2000);
+  }
+
+  if (loading) return <div className="bg-white rounded-2xl p-6 text-center shadow-sm"><p className="text-gray-400 text-sm">Loading...</p></div>;
+  if (!draft) return <div className="bg-white rounded-2xl p-6 text-center shadow-sm"><p className="text-gray-400 text-sm">No published content yet. Generate and publish from the AI Assistant.</p></div>;
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white rounded-2xl p-4 shadow-sm">
+        <h3 className="font-bold text-gray-800 mb-1">Published Content</h3>
+        <p className="text-xs text-gray-400">Most recent published sermon content. Tap any section to copy.</p>
+      </div>
+
+      {draft.generated_announcement && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Announcement</p>
+            <button onClick={() => copy(draft.generated_announcement, 'announcement')}
+              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: copied === 'announcement' ? '#4ade80' : user.church.primaryColor }}>
+              {copied === 'announcement' ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <p className="text-gray-700 text-sm leading-relaxed">{draft.generated_announcement}</p>
+        </div>
+      )}
+
+      {draft.generated_prayer && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Prayer Prompt</p>
+            <button onClick={() => copy(draft.generated_prayer, 'prayer')}
+              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: copied === 'prayer' ? '#4ade80' : user.church.primaryColor }}>
+              {copied === 'prayer' ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <p className="text-gray-700 text-sm leading-relaxed">{draft.generated_prayer}</p>
+        </div>
+      )}
+
+      {draft.generated_questions?.length > 0 && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Small Group Questions</p>
+            <button onClick={() => copy(draft.generated_questions.join('\n'), 'questions')}
+              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: copied === 'questions' ? '#4ade80' : user.church.primaryColor }}>
+              {copied === 'questions' ? 'Copied!' : 'Copy All'}
+            </button>
+          </div>
+          {draft.generated_questions.map((q: string, i: number) => (
+            <div key={i} className="flex gap-2 mb-2">
+              <span className="text-xs text-gray-400 mt-0.5 flex-shrink-0">{i + 1}.</span>
+              <p className="text-gray-700 text-sm">{q}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {draft.generated_social && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Social Media Captions</p>
+          {Object.entries(draft.generated_social).map(([key, val]) => (
+            <div key={key} className="mb-3 p-3 rounded-xl bg-gray-50">
+              <div className="flex justify-between items-center mb-1">
+                <p className="text-xs font-bold text-gray-500 capitalize">{key}</p>
+                <button onClick={() => copy(val as string, key)}
+                  className="text-xs px-2 py-0.5 rounded-lg text-white font-semibold"
+                  style={{ backgroundColor: copied === key ? '#4ade80' : user.church.primaryColor }}>
+                  {copied === key ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <p className="text-gray-700 text-sm leading-relaxed">{val as string}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {draft.generated_challenge && (
+        <div className="bg-white rounded-2xl p-4 shadow-sm">
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Weekly Challenge</p>
+            <button onClick={() => copy(`${draft.generated_challenge.title}\n${draft.generated_challenge.description}`, 'challenge')}
+              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
+              style={{ backgroundColor: copied === 'challenge' ? '#4ade80' : user.church.primaryColor }}>
+              {copied === 'challenge' ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <p className="font-semibold text-gray-800 mb-1">{draft.generated_challenge.title}</p>
+          <p className="text-gray-600 text-sm">{draft.generated_challenge.description}</p>
+          <div className="flex gap-3 mt-2">
+            <span className="text-xs px-2 py-1 rounded-full text-white" style={{ backgroundColor: user.church.primaryColor }}>{draft.generated_challenge.type}</span>
+            <span className="text-xs text-gray-500">{draft.generated_challenge.duration_days} days</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [tab, setTab] = useState('overview');
@@ -2937,8 +3055,7 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
     }
   }
 
-const adminTabs = ['overview', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];
-
+  const adminTabs = ['overview', 'content', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
@@ -3109,6 +3226,9 @@ const adminTabs = ['overview', 'branding', 'points', 'notifications', 'groups', 
             Save Points Settings
           </button>
         </div>
+      )}
+      {tab === 'content' && (
+        <PublishedContentViewer user={user} />
       )}
 {tab === 'notifications' && (
         <NotificationSender user={user} />
