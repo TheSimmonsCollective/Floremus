@@ -335,7 +335,7 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
       if (dv) setDevotional(dv);
 
       const { data: an } = await supabase.from('announcements').select('*')
-        .eq('church_id', user.church.id).eq('approved', true).eq('pinned', true).limit(2);
+.eq('church_id', user.church.id).eq('approved', true).order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(5);
       if (an) setPinned(an);
     })();
   }, [user.church.id]);
@@ -366,11 +366,14 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
         </div>
       </div>
 
-      {pinned.map((a, i) => (
-        <div key={i} className="rounded-xl p-3 border-l-4 bg-white" style={{ borderColor: user.church.primaryColor }}>
+     {pinned.map((a, i) => (
+        <button key={i} onClick={() => setActiveTab('more')}
+          className="w-full rounded-xl p-3 border-l-4 bg-white text-left"
+          style={{ borderColor: user.church.primaryColor }}>
           <p className="font-semibold text-gray-800 text-sm">📣 {a.title}</p>
           {a.body && <p className="text-gray-500 text-xs mt-1">{a.body}</p>}
-        </div>
+          <p className="text-xs mt-1 font-semibold" style={{ color: user.church.primaryColor }}>Tap to view all announcements →</p>
+        </button>
       ))}
 
       <div className="bg-white rounded-2xl p-4 shadow-sm">
@@ -397,17 +400,18 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
             {events.map((ev, i) => {
               const d = new Date(ev.event_date);
               return (
-                <div key={i} className="flex items-center gap-3">
+                <button key={i} onClick={() => setActiveTab('more')} className="w-full flex items-center gap-3 text-left">
                   <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
                     style={{ backgroundColor: user.church.primaryColor }}>
                     <span className="text-lg font-bold leading-none">{d.getDate()}</span>
                     <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="font-semibold text-gray-800 text-sm">{ev.title}</p>
                     <p className="text-gray-500 text-xs">{ev.location || d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
-                </div>
+                  <span className="text-gray-400 text-sm">›</span>
+                </button>
               );
             })}
           </div>
@@ -1273,7 +1277,7 @@ function CommunityScreen({ user }: { user: User }) {
   }, [user.church.id]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [msgs]);
+useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'instant' }), 100); }, [msgs]);
 
   async function postPrayer() {
     if (!prayerText.trim()) return;
@@ -1477,7 +1481,7 @@ function GroupsScreen({ user }: { user: User }) {
     return () => { supabase.removeChannel(channel); };
   }, [selGroup]);
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [gMsgs]);
+useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'instant' }), 100); }, [gMsgs]);
 
   async function sendMsg() {
     if (!chatText.trim() || !selGroup) return;
@@ -3452,6 +3456,17 @@ function App() {
             subscriptionTier: church.subscription_tier || 'starter',
           },
         });
+      }
+    }
+    // Update streak on app open
+    if (profile) {
+      const today = new Date().toDateString();
+      const lastOpen = localStorage.getItem(`last_open_${session.user.id}`);
+      if (lastOpen !== today) {
+        localStorage.setItem(`last_open_${session.user.id}`, today);
+        const yesterday = new Date(Date.now() - 86400000).toDateString();
+        const newStreak = lastOpen === yesterday ? (profile.streak || 0) + 1 : 1;
+        await supabase.from('profiles').update({ streak: newStreak }).eq('id', session.user.id);
       }
     }
     setLoading(false);
