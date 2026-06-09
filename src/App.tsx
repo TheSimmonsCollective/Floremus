@@ -1510,6 +1510,108 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
     </div>
   );
 }
+function GroupCard({ group: g, user, onEnter }: { group: any; user: User; onEnter: () => void }) {
+  const [status, setStatus] = useState<'none' | 'pending' | 'member'>('none');
+  const [requests, setRequests] = useState<any[]>([]);
+  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+
+  useEffect(() => {
+    (async () => {
+      const { data: membership } = await supabase.from('group_members')
+        .select('id').eq('group_id', g.id).eq('member_id', user.id).maybeSingle();
+      if (membership) { setStatus('member'); return; }
+      if (g.leader_id === user.id || g.leader_id_2 === user.id) { setStatus('member'); return; }
+      const { data: req } = await supabase.from('group_join_requests')
+        .select('id, status').eq('group_id', g.id).eq('member_id', user.id).maybeSingle();
+      if (req) setStatus(req.status === 'approved' ? 'member' : 'pending');
+      if (isAdmin) {
+        const { data: reqs } = await supabase.from('group_join_requests')
+          .select('*, profiles(full_name, avatar_url)')
+          .eq('group_id', g.id).eq('status', 'pending');
+        if (reqs) setRequests(reqs);
+      }
+    })();
+  }, [g.id, user.id, isAdmin]);
+
+  async function requestJoin() {
+    await supabase.from('group_join_requests').insert({
+      group_id: g.id, member_id: user.id, church_id: user.church.id,
+    });
+    setStatus('pending');
+  }
+
+  async function approveRequest(requestId: string, memberId: string) {
+    await supabase.from('group_join_requests').update({ status: 'approved' }).eq('id', requestId);
+    await supabase.from('group_members').insert({ group_id: g.id, member_id: memberId });
+    setRequests(requests.filter(r => r.id !== requestId));
+  }
+
+  async function denyRequest(requestId: string) {
+    await supabase.from('group_join_requests').update({ status: 'denied' }).eq('id', requestId);
+    setRequests(requests.filter(r => r.id !== requestId));
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <div className="p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
+            style={{ backgroundColor: user.church.primaryColor }}>
+            {g.name.charAt(0)}
+          </div>
+          <div>
+            <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
+            {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
+            {requests.length > 0 && (
+              <p className="text-xs font-semibold mt-0.5" style={{ color: user.church.primaryColor }}>
+                {requests.length} pending request{requests.length > 1 ? 's' : ''}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2">
+          {status === 'member' || isAdmin ? (
+            <button onClick={onEnter}
+              className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              {isAdmin ? 'Enter' : 'Chat'}
+            </button>
+          ) : status === 'pending' ? (
+            <span className="px-3 py-1 rounded-xl text-xs font-semibold bg-yellow-100 text-yellow-700">
+              Pending
+            </span>
+          ) : (
+            <button onClick={requestJoin}
+              className="px-3 py-1 rounded-xl text-xs font-semibold border"
+              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+              Request to Join
+            </button>
+          )}
+        </div>
+      </div>
+      {isAdmin && requests.length > 0 && (
+        <div className="px-4 pb-4 border-t border-gray-50 space-y-2 pt-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Join Requests</p>
+          {requests.map((r, i) => (
+            <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+              <div className="flex items-center gap-2">
+                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={28} color={user.church.primaryColor} />
+                <p className="text-sm font-semibold text-gray-800">{r.profiles?.full_name || 'Member'}</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => approveRequest(r.id, r.member_id)}
+                  className="px-2 py-1 rounded-lg text-white text-xs font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
+                <button onClick={() => denyRequest(r.id)}
+                  className="px-2 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-semibold">Deny</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Groups Screen ──────────────────────────────────────────────────────────
 function GroupsScreen({ user }: { user: User }) {
@@ -1634,21 +1736,7 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
               <p className="text-gray-400 text-sm">No groups yet.</p>
             </div>
           ) : groups.map((g, i) => (
-            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
-                  style={{ backgroundColor: user.church.primaryColor }}>
-                  {g.name.charAt(0)}
-                </div>
-                <div>
-                  <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
-                  <p className="text-xs text-gray-500">Leader: {g.profiles?.full_name || 'TBD'}</p>
-                </div>
-              </div>
-              <button onClick={() => setSelGroup(g)}
-                className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
-                style={{ backgroundColor: user.church.primaryColor }}>Chat</button>
-            </div>
+            <GroupCard key={i} group={g} user={user} onEnter={() => setSelGroup(g)} />
           ))}
         </div>
       )}
@@ -3492,7 +3580,7 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
         <p className="text-xs text-gray-500 mt-1">Lock in your spot before this offer closes.</p>
       </div>
       <p className="text-center text-gray-500 text-sm">30-day money back guarantee on all plans</p>
-      
+
       {plans.map((p, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border-2 relative"
           style={{ borderColor: p.popular ? user.church.primaryColor : '#F3F4F6' }}>
