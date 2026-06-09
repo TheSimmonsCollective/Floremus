@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabase';
+import { QRCodeSVG } from 'qrcode.react';
 
 // ── Brand ──────────────────────────────────────────────────────────────────
 const BRAND = {
@@ -2357,10 +2358,14 @@ function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
       </div>
       <div className="bg-white rounded-2xl p-6 shadow-sm text-center">
         <div className="flex justify-center mb-4">
-          <FloremusLogo size={80} variant="noTagline" />
+          <FloremusLogo size={60} variant="noTagline" />
         </div>
         <h3 className="font-bold text-gray-800 text-xl mb-2">{user.church.name}</h3>
-        <p className="text-gray-500 text-sm mb-6">Check in to earn points and keep your streak going</p>
+        <p className="text-gray-500 text-sm mb-4">Check in to earn points and keep your streak going</p>
+        <div className="flex justify-center mb-4 p-3 bg-white rounded-2xl border border-gray-100 inline-block mx-auto">
+        <QRCodeSVG value={`${window.location.origin}`} size={120} fgColor={user.church.primaryColor} />
+        </div>
+        <p className="text-xs text-gray-400 mb-4">Scan to open Floremus on your device</p>
         {done ? (
           <div>
             <p className="text-4xl mb-2">✅</p>
