@@ -554,13 +554,24 @@ function SundayScreen({ user }: { user: User }) {
           ) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-              {sermon?.key_scriptures?.length > 0 ? (
-                <div className="space-y-2">
+             {sermon?.key_scriptures?.length > 0 ? (
+                <div className="space-y-3">
                   {sermon.key_scriptures.map((s: any, i: number) => (
                     <div key={i} className="rounded-xl p-3 border-l-4"
                       style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                      <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>{s.reference}</p>
-                      <p className="text-gray-800 text-sm italic">"{s.text}"</p>
+                      <p className="text-xs font-semibold mb-2" style={{ color: user.church.primaryColor }}>{s.reference}</p>
+                      {s.versions ? (
+                        <div className="space-y-2">
+                          {s.versions.map((v: any, j: number) => (
+                            <div key={j}>
+                              <p className="text-xs font-bold text-gray-400 mb-0.5">{v.translation}</p>
+                              <p className="text-gray-800 text-sm italic">"{v.text}"</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-gray-800 text-sm italic">"{s.text}"</p>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -922,20 +933,28 @@ Return ONLY this JSON structure. Fill in ALL fields. For key_scriptures provide 
 
 async function publish() {
     if (!draft?.id) return;
+
     await supabase.from('sermon_drafts').update({ status: 'published' }).eq('id', draft.id);
+
     if (draft.generated_devotionals) {
-      console.log('Devotionals to save:', JSON.stringify(draft.generated_devotionals));
       for (const d of draft.generated_devotionals) {
-        console.log('Saving devotional:', d);
-        const { error } = await supabase.from('devotionals').insert({
-          church_id: user.church.id, author_id: user.id,
-          title: d.title, scripture: d.scripture, body: d.body, day_of_week: d.day,
+        await supabase.from('devotionals').insert({
+          church_id: user.church.id,
+          author_id: user.id,
+          title: d.title,
+          scripture: d.scripture,
+          body: d.body,
+          day_of_week: d.day,
         });
-        if (error) console.log('Insert error:', error);
       }
     }
+
+    await supabase.from('weekly_sermon').update({ published: true }).eq('church_id', user.church.id);
+
     alert('Content published!');
-    setStep('input'); setDraft(null); setOutline('');
+    setStep('input');
+    setDraft(null);
+    setOutline('');
   }
 
  const theologyFields = [
