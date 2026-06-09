@@ -810,119 +810,106 @@ function AISermonAssistant({ user }: { user: User }) {
   async function generate() {
     if (!outline.trim()) { alert('Please enter your sermon outline'); return; }
     setGenerating(true);
-    const sys = `You are a ministry content assistant. Generate content for a church with these characteristics:
+
+    const selectedTranslations = [theology.translation_1, theology.translation_2, theology.translation_3].filter(Boolean);
+    const translationsStr = selectedTranslations.length > 0 ? selectedTranslations.join(', ') : 'KJV';
+
+    const baseContext = `Church profile:
 Denomination: ${theology.denomination || 'Non-denominational'}
-Bible Translation: ${theology.bible_translation}
 Worship Style: ${theology.worship_style || 'Contemporary'}
 Statement of Faith: ${theology.statement_of_faith || 'Standard evangelical'}
 Theological Positions: ${theology.theological_positions || 'Standard evangelical'}
-NEVER generate content about: ${theology.restricted_topics || 'none specified'}
 Writing Tone: ${theology.writing_tone || 'Conversational'}
-NEVER use em dashes (—) in any generated content. Use commas, periods, or rewrite the sentence instead.
-You MUST respond with ONLY a valid JSON object. No introduction, no explanation, no markdown, no code blocks. Just raw JSON.
+NEVER include: ${theology.restricted_topics || 'none'}
+NEVER use em dashes. Use commas or periods instead.
+Respond with ONLY raw valid JSON. No markdown, no backticks, no explanation.`;
 
-The JSON must follow this exact structure:
-{
-  "devotionals": [
-    {"day": "Monday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
-    {"day": "Tuesday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
-    {"day": "Wednesday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
-    {"day": "Thursday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"},
-    {"day": "Friday", "title": "string", "scripture": "string", "body": "string", "reflection": "string"}
-  ],
-  "sermon_notes": {
-    "title": "string",
-    "scripture": "string",
-    "series": "string",
-       "key_scriptures": [
-      {"reference": "Book Chapter:Verse", "text": "Full verse text here"},
-      {"reference": "Book Chapter:Verse", "text": "Full verse text here"},
-      {"reference": "Book Chapter:Verse", "text": "Full verse text here"}
-    ],
-    "blanks": [
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"},
-      {"label": "fill in the blank question with ___ for the blank", "answer": "the missing word or phrase"}
-    ],
-    "open_ended": [
-      "open ended question about the sermon",
-      "open ended question about the sermon",
-      "open ended question about the sermon",
-      "open ended question about the sermon",
-      "open ended question about the sermon"
-    ],
-    "reflections": [
-      "deep personal reflection question",
-      "deep personal reflection question"
-    ]
-  },
-  "small_group_questions": ["string", "string", "string", "string", "string"],
-  "challenge": {"title": "string", "type": "Streak", "description": "string", "duration_days": 7},
-  "prayer_prompt": "string",
-  "announcement": "string",
-  "social_captions": {"short": "string", "medium": "string", "long": "string"}
-}`;
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-api-key': process.env.REACT_APP_ANTHROPIC_KEY!,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    };
+
     try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
+      // ── CALL 1: Weekly content ─────────────────────────────────────────
+      const res1 = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.REACT_APP_ANTHROPIC_KEY!,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
+        headers,
         body: JSON.stringify({
-model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 4000,
-          system: sys,
-          messages: [{ role: 'user', content: `Generate ministry content for this sermon:\n\n${outline}` }],
+          system: `${baseContext}
+Return ONLY this JSON structure:
+{"devotionals":[{"day":"Monday","title":"","scripture":"","body":"","reflection":""},{"day":"Tuesday","title":"","scripture":"","body":"","reflection":""},{"day":"Wednesday","title":"","scripture":"","body":"","reflection":""},{"day":"Thursday","title":"","scripture":"","body":"","reflection":""},{"day":"Friday","title":"","scripture":"","body":"","reflection":""}],"small_group_questions":["","","","",""],"challenge":{"title":"","type":"Streak","description":"","duration_days":7},"prayer_prompt":"","announcement":"","social_captions":{"short":"","medium":"","long":""}}`,
+          messages: [{ role: 'user', content: `Generate weekly ministry content for this sermon:\n\n${outline}` }],
         }),
       });
-     const raw = await res.json();
-      const text = raw.content?.[0]?.text || '';
-      
-const cleaned = text
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/```\s*$/i, '')
-        .trim();
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        let p;
-        try {
-          p = JSON.parse(match[0]);
-        } catch {
-          alert('The AI returned content in an unexpected format. Please try again.');
-          setGenerating(false);
-          return;
-        }
-        const nd: SermonDraft = {
-          sermon_outline: outline,
-          generated_devotionals: p.devotionals,
-          generated_questions: p.small_group_questions,
-          generated_challenge: p.challenge,
-          generated_prayer: p.prayer_prompt,
-          generated_announcement: p.announcement,
-          generated_social: p.social_captions,
-          admin_notes: '',
-          status: 'draft',
-        };
+      const raw1 = await res1.json();
+      const text1 = (raw1.content?.[0]?.text || '').replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const match1 = text1.match(/\{[\s\S]*\}/);
+      if (!match1) { alert('Could not generate weekly content. Please try again.'); setGenerating(false); return; }
+      let p1: any;
+      try { p1 = JSON.parse(match1[0]); } catch { alert('Could not parse weekly content. Please try again.'); setGenerating(false); return; }
 
-        
-        const { data: saved } = await supabase.from('sermon_drafts').insert({
-          church_id: user.church.id, created_by: user.id, ...nd,
-        }).select().single();
-        setDraft({ ...nd, id: saved?.id });
-        setStep('draft');
-      } else {
-        alert('Could not parse content. Please try again.');
-      }
-    } catch {
+      // ── CALL 2: Sermon notes and key scriptures ────────────────────────
+      const versionsTemplate = selectedTranslations.map(t => `{"translation":"${t}","text":"full verse text in ${t}"}`).join(',');
+      const res2 = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 3000,
+          system: `${baseContext}
+Bible Translations to use: ${translationsStr}
+Return ONLY this JSON structure. Fill in ALL fields. For key_scriptures provide the actual verse text for each translation:
+{"sermon_notes":{"title":"","scripture":"","series":"","blanks":[{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""},{"label":"statement with ___ blank","answer":""}],"open_ended":["","","","",""],"reflections":["",""]},"key_scriptures":[{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]},{"reference":"","versions":[${versionsTemplate}]}]}`,
+          messages: [{ role: 'user', content: `Generate sermon notes and key scriptures for this sermon:\n\n${outline}` }],
+        }),
+      });
+      const raw2 = await res2.json();
+      const text2 = (raw2.content?.[0]?.text || '').replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const match2 = text2.match(/\{[\s\S]*\}/);
+      if (!match2) { alert('Could not generate sermon notes. Please try again.'); setGenerating(false); return; }
+      let p2: any;
+      try { p2 = JSON.parse(match2[0]); } catch { alert('Could not parse sermon notes. Please try again.'); setGenerating(false); return; }
+
+      // ── Save sermon notes to weekly_sermon ─────────────────────────────
+      await supabase.from('weekly_sermon').upsert({
+        church_id: user.church.id,
+        title: p2.sermon_notes?.title || '',
+        scripture: p2.sermon_notes?.scripture || '',
+        series: p2.sermon_notes?.series || null,
+        blanks: p2.sermon_notes?.blanks || [],
+        open_ended: p2.sermon_notes?.open_ended || [],
+        reflections: p2.sermon_notes?.reflections || [],
+        key_scriptures: p2.key_scriptures || [],
+        bible_translations: translationsStr,
+        published: false,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'church_id' });
+
+      // ── Save draft ─────────────────────────────────────────────────────
+      const nd: SermonDraft = {
+        sermon_outline: outline,
+        generated_devotionals: p1.devotionals,
+        generated_questions: p1.small_group_questions,
+        generated_challenge: p1.challenge,
+        generated_prayer: p1.prayer_prompt,
+        generated_announcement: p1.announcement,
+        generated_social: p1.social_captions,
+        admin_notes: '',
+        status: 'draft',
+      };
+      const { data: saved } = await supabase.from('sermon_drafts')
+        .insert({ church_id: user.church.id, created_by: user.id, ...nd })
+        .select().single();
+      setDraft({ ...nd, id: saved?.id });
+      setStep('draft');
+
+    } catch (e) {
       alert('Generation failed. Check your connection and try again.');
+      console.error(e);
     }
     setGenerating(false);
   }
