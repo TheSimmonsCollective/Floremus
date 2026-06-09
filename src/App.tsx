@@ -1218,6 +1218,109 @@ function DevotionalAccordion({ user, devotionals }: { user: User; devotionals: a
     </div>
   );
 }
+function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
+  const [expanded, setExpanded] = useState(false);
+  const [joined, setJoined] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('challenge_participants')
+        .select('*').eq('challenge_id', c.id).eq('member_id', user.id).maybeSingle();
+      if (data) { setJoined(true); setProgress(data.progress || 0); }
+    })();
+  }, [c.id, user.id]);
+
+  async function join() {
+    setLoading(true);
+    await supabase.from('challenge_participants').insert({
+      challenge_id: c.id, member_id: user.id, progress: 0,
+    });
+    setJoined(true);
+    setLoading(false);
+  }
+
+  async function logProgress() {
+    if (!joined) return;
+    const newProgress = Math.min(progress + 1, c.total_days || 1);
+    await supabase.from('challenge_participants')
+      .update({ progress: newProgress, completed: newProgress >= (c.total_days || 1) })
+      .eq('challenge_id', c.id).eq('member_id', user.id);
+    if (newProgress >= (c.total_days || 1)) {
+      await supabase.from('profiles').update({ points: user.points + (c.points || 100) }).eq('id', user.id);
+      alert(`Challenge complete! +${c.points || 100} points earned!`);
+    } else {
+      alert(`Day ${newProgress} logged! Keep going!`);
+    }
+    setProgress(newProgress);
+  }
+
+  const totalDays = c.total_days || 7;
+  const pct = Math.round((progress / totalDays) * 100);
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+      <button onClick={() => setExpanded(!expanded)} className="w-full p-4 text-left">
+        <div className="flex justify-between items-start mb-1">
+          <h3 className="font-bold text-gray-800 text-sm flex-1 pr-2">{c.title}</h3>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs px-2 py-0.5 rounded-full text-white"
+              style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
+            <span className="text-gray-400">{expanded ? '∧' : '∨'}</span>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">{c.points} points · {totalDays} days</p>
+        {joined && (
+          <div className="mt-2">
+            <div className="flex justify-between text-xs text-gray-400 mb-1">
+              <span>Progress</span>
+              <span>{progress}/{totalDays} days</span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-gray-100">
+              <div className="h-2 rounded-full transition-all"
+                style={{ width: `${pct}%`, backgroundColor: user.church.primaryColor }} />
+            </div>
+          </div>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4 border-t border-gray-50 space-y-3">
+          {c.description && (
+            <p className="text-gray-600 text-sm pt-3 leading-relaxed">{c.description}</p>
+          )}
+          {c.type === 'Streak' && (
+            <div className="flex gap-1">
+              {Array.from({ length: totalDays }).map((_, d) => (
+                <div key={d} className="flex-1 h-2 rounded-full"
+                  style={{ backgroundColor: d < progress ? user.church.primaryColor : '#E5E7EB' }} />
+              ))}
+            </div>
+          )}
+          {!joined ? (
+            <button onClick={join} disabled={loading}
+              className="w-full py-3 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor, opacity: loading ? 0.7 : 1 }}>
+              {loading ? 'Joining...' : 'Join Challenge'}
+            </button>
+          ) : progress >= totalDays ? (
+            <div className="text-center py-2">
+              <p className="text-2xl mb-1">🏆</p>
+              <p className="font-bold text-green-600 text-sm">Challenge Complete!</p>
+            </div>
+          ) : (
+            <button onClick={logProgress}
+              className="w-full py-3 rounded-xl text-white text-sm font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Log Today's Progress (+{Math.round((c.points || 100) / totalDays)} pts)
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Community Screen ───────────────────────────────────────────────────────
 function CommunityScreen({ user }: { user: User }) {
@@ -1360,28 +1463,7 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
               <p className="text-gray-400 text-sm">No active challenges yet.</p>
             </div>
           ) : challenges.map((c, i) => (
-            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="font-bold text-gray-800">{c.title}</h3>
-                <span className="text-xs px-2 py-1 rounded-full text-white" style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
-              </div>
-              <p className="text-xs text-gray-500 mb-3">{c.points} points</p>
-              {c.type === 'Streak' && c.total_days && (
-                <div className="flex gap-1 mb-3">
-                  {Array.from({ length: c.total_days as number }).map((_, d) => (
-                    <div key={d} className="flex-1 h-2 rounded-full"
-                      style={{ backgroundColor: d < 3 ? user.church.primaryColor : '#E5E7EB' }} />
-                  ))}
-                </div>
-              )}
-              <button onClick={async () => {
-                await supabase.from('challenge_participants').insert({ challenge_id: c.id, member_id: user.id });
-                alert('You joined the challenge!');
-              }} className="w-full py-2 rounded-xl text-white text-sm font-semibold"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                Join Challenge
-              </button>
-            </div>
+            <ChallengeCard key={i} challenge={c} user={user} />
           ))}
         </div>
       )}
