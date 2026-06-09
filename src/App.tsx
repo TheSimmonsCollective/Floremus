@@ -1277,7 +1277,7 @@ function CommunityScreen({ user }: { user: User }) {
   }, [user.church.id]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'instant' }), 100); }, [msgs]);
+useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }, [msgs]);
 
   async function postPrayer() {
     if (!prayerText.trim()) return;
@@ -1481,7 +1481,7 @@ function GroupsScreen({ user }: { user: User }) {
     return () => { supabase.removeChannel(channel); };
   }, [selGroup]);
 
-useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'instant' }), 100); }, [gMsgs]);
+useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }, [gMsgs]);
 
   async function sendMsg() {
     if (!chatText.trim() || !selGroup) return;
