@@ -3486,8 +3486,13 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
       <div className="flex justify-center">
         <FloremusLogo size={80} variant="seal" />
       </div>
+<div className="rounded-2xl p-4 text-center border-2" style={{ borderColor: user.church.primaryColor, backgroundColor: '#F5F0FF' }}>
+        <p className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: user.church.primaryColor }}>Founding Church Offer</p>
+        <p className="font-bold text-gray-800 text-sm">The first 25 churches get full Kingdom tier access at the Starter price.</p>
+        <p className="text-xs text-gray-500 mt-1">Lock in your spot before this offer closes.</p>
+      </div>
       <p className="text-center text-gray-500 text-sm">30-day money back guarantee on all plans</p>
-
+      
       {plans.map((p, i) => (
         <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border-2 relative"
           style={{ borderColor: p.popular ? user.church.primaryColor : '#F3F4F6' }}>
