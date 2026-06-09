@@ -876,7 +876,7 @@ The JSON must follow this exact structure:
           'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
-model: 'claude-sonnet-4-5',
+model: 'claude-haiku-4-5-20251001',
           max_tokens: 4000,
           system: sys,
           messages: [{ role: 'user', content: `Generate ministry content for this sermon:\n\n${outline}` }],
