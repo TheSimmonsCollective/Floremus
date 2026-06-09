@@ -315,7 +315,7 @@ function BottomNav({ active, setActive, color }: { active: string; setActive: (t
 }
 
 // ── Home Screen ────────────────────────────────────────────────────────────
-function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: string) => void }) {
+function HomeScreen({ user, setActiveTab, setMoreSub }: { user: User; setActiveTab: (t: string) => void; setMoreSub: (s: string) => void }) {
   const [events, setEvents] = useState<any[]>([]);
   const [devotional, setDevotional] = useState<any>(null);
   const [pinned, setPinned] = useState<any[]>([]);
@@ -367,7 +367,7 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
       </div>
 
      {pinned.map((a, i) => (
-        <button key={i} onClick={() => setActiveTab('more')}
+        <button key={i} onClick={() => { setMoreSub('ann'); setActiveTab('more'); }}
           className="w-full rounded-xl p-3 border-l-4 bg-white text-left"
           style={{ borderColor: user.church.primaryColor }}>
           <p className="font-semibold text-gray-800 text-sm">📣 {a.title}</p>
@@ -400,8 +400,8 @@ function HomeScreen({ user, setActiveTab }: { user: User; setActiveTab: (t: stri
             {events.map((ev, i) => {
               const d = new Date(ev.event_date);
               return (
-                <button key={i} onClick={() => setActiveTab('more')} className="w-full flex items-center gap-3 text-left">
-                  <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
+                    <button key={i} onClick={() => { setMoreSub('events'); setActiveTab('more'); }} className="w-full flex items-center gap-3 text-left">
+                    <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
                     style={{ backgroundColor: user.church.primaryColor }}>
                     <span className="text-lg font-bold leading-none">{d.getDate()}</span>
                     <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
@@ -1681,10 +1681,10 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
 }
 
 // ── More Screen ────────────────────────────────────────────────────────────
-function MoreScreen({ user }: { user: User }) {
-  const [sub, setSub] = useState('menu');
+function MoreScreen({ user, initialSub, onSubChange }: { user: User; initialSub?: string; onSubChange?: (s: string) => void }) {
+  const [sub, setSub] = useState(initialSub || 'menu');
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
-  const back = () => setSub('menu');
+const back = () => { setSub('menu'); onSubChange?.('menu'); };
 
   const items = [
     { icon: '💳', label: 'Give', tab: 'giving' },
@@ -3505,7 +3505,8 @@ function ResetPasswordScreen() {
 // ── Main App ───────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser] = useState<User | null>(null);
-  const [tab, setTab] = useState('home');
+const [tab, setTab] = useState('home');
+  const [moreSub, setMoreSub] = useState('menu');
   const [loading, setLoading] = useState(true);
 
   async function loadProfile(session: any) {
@@ -3768,11 +3769,11 @@ if (window.location.pathname.startsWith('/join/')) {
         </div>
 
         <div className="pb-20">
-          {tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} />}
+{tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} setMoreSub={setMoreSub} />}
           {tab === 'sunday' && <SundayScreen user={user} />}
           {tab === 'community' && <CommunityScreen user={user} />}
           {tab === 'groups' && <GroupsScreen user={user} />}
-          {tab === 'more' && <MoreScreen user={user} />}
+          {tab === 'more' && <MoreScreen user={user} initialSub={moreSub} onSubChange={setMoreSub} />} 
         </div>
 
         <BottomNav active={tab} setActive={setTab} color={color} />
