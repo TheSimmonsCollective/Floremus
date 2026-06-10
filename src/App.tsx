@@ -730,22 +730,22 @@ function SermonNotesEditor({ user }: { user: User }) {
     <div className="space-y-3 p-3 rounded-xl border border-gray-100">
       <div>
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sermon Title</label>
-        <input type="text" value={sermon.title || ''}
-          onChange={e => setSermon({ ...sermon, title: e.target.value })}
+        <input type="text" defaultValue={sermon.title || ''}
+          onBlur={e => setSermon({ ...sermon, title: e.target.value })}
           className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
       </div>
       <div>
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Scripture</label>
-        <input type="text" value={sermon.scripture || ''}
-          onChange={e => setSermon({ ...sermon, scripture: e.target.value })}
+        <input type="text" defaultValue={sermon.scripture || ''}
+          onBlur={e => setSermon({ ...sermon, scripture: e.target.value })}
           className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
       </div>
       <div>
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Fill in the Blanks</label>
         {(sermon.blanks || []).map((b: any, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" value={b.label || ''}
-              onChange={e => {
+            <input type="text" defaultValue={b.label || ''}
+              onBlur={e => {
                 const updated = [...sermon.blanks];
                 updated[i] = { ...updated[i], label: e.target.value };
                 setSermon({ ...sermon, blanks: updated });
@@ -758,8 +758,8 @@ function SermonNotesEditor({ user }: { user: User }) {
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Open Ended Questions</label>
         {(sermon.open_ended || []).map((q: string, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" value={q}
-              onChange={e => {
+            <input type="text" defaultValue={q}
+              onBlur={e => {
                 const updated = [...sermon.open_ended];
                 updated[i] = e.target.value;
                 setSermon({ ...sermon, open_ended: updated });
@@ -772,8 +772,8 @@ function SermonNotesEditor({ user }: { user: User }) {
         <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Reflection Questions</label>
         {(sermon.reflections || []).map((r: string, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" value={r}
-              onChange={e => {
+            <input type="text" defaultValue={r}
+              onBlur={e => {
                 const updated = [...sermon.reflections];
                 updated[i] = e.target.value;
                 setSermon({ ...sermon, reflections: updated });
@@ -1544,6 +1544,7 @@ function GroupCard({ group: g, user, onEnter }: { group: any; user: User; onEnte
   async function approveRequest(requestId: string, memberId: string) {
     await supabase.from('group_join_requests').update({ status: 'approved' }).eq('id', requestId);
     await supabase.from('group_members').insert({ group_id: g.id, member_id: memberId });
+    await supabase.from('groups').update({ member_count: (g.member_count || 0) + 1 }).eq('id', g.id);
     setRequests(requests.filter(r => r.id !== requestId));
   }
 
