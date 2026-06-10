@@ -1411,11 +1411,10 @@ function CommunityScreen({ user }: { user: User }) {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
 useEffect(() => { 
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     const el = document.getElementById('community-chat-messages');
     if (el) el.scrollTop = el.scrollHeight;
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, 300); 
+  });
 }, [msgs]);
 
   async function postPrayer() {
@@ -1703,11 +1702,10 @@ function GroupsScreen({ user }: { user: User }) {
   }, [selGroup]);
 
 useEffect(() => { 
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     const el = document.getElementById('group-chat-messages');
     if (el) el.scrollTop = el.scrollHeight;
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, 300); 
+  });
 }, [gMsgs]);
 
   async function sendMsg() {
