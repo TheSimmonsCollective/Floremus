@@ -2386,10 +2386,48 @@ function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
         </div>
         <h3 className="font-bold text-gray-800 text-xl mb-2">{user.church.name}</h3>
         <p className="text-gray-500 text-sm mb-4">Check in to earn points and keep your streak going</p>
-        <div className="flex justify-center mb-4 p-3 bg-white rounded-2xl border border-gray-100 inline-block mx-auto">
-        <QRCodeSVG value={`${window.location.origin}`} size={120} fgColor={user.church.primaryColor} />
+        <div className="flex flex-col items-center mb-4">
+          <div id="qr-code" className="p-4 bg-white rounded-2xl border border-gray-100">
+            <QRCodeSVG value={`${window.location.origin}`} size={140} fgColor={user.church.primaryColor} />
+          </div>
+          <p className="text-xs text-gray-400 mt-2 mb-3">Scan to open Floremus on your device</p>
+          <div className="flex gap-2">
+            <button onClick={() => {
+              const svg = document.getElementById('qr-code')?.querySelector('svg');
+              if (!svg) return;
+              const data = new XMLSerializer().serializeToString(svg);
+              const blob = new Blob([data], { type: 'image/svg+xml' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = 'floremus-checkin-qr.svg';
+              a.click();
+            }} className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
+              style={{ backgroundColor: user.church.primaryColor }}>
+              Download QR
+            </button>
+            <button onClick={() => {
+              const printWindow = window.open('', '_blank');
+              if (!printWindow) return;
+              const svg = document.getElementById('qr-code')?.querySelector('svg');
+              if (!svg) return;
+              printWindow.document.write(`
+                <html><head><title>Check In QR Code - ${user.church.name}</title></head>
+                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;text-align:center;">
+                  <h2 style="margin-bottom:16px;">${user.church.name}</h2>
+                  <p style="margin-bottom:24px;color:#666;">Scan to check in with Floremus</p>
+                  ${svg.outerHTML}
+                  <p style="margin-top:24px;color:#999;font-size:12px;">floremus.church</p>
+                </body></html>
+              `);
+              printWindow.document.close();
+              printWindow.print();
+            }} className="px-4 py-2 rounded-xl text-xs font-semibold border"
+              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+              Print QR
+            </button>
+          </div>
         </div>
-        <p className="text-xs text-gray-400 mb-4">Scan to open Floremus on your device</p>
         {done ? (
           <div>
             <p className="text-4xl mb-2">✅</p>
