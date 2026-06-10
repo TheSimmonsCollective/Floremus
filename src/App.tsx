@@ -1381,7 +1381,13 @@ function CommunityScreen({ user }: { user: User }) {
   }, [user.church.id]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }, [msgs]);
+useEffect(() => { 
+  setTimeout(() => {
+    const el = document.getElementById('community-chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, 300); 
+}, [msgs]);
 
   async function postPrayer() {
     if (!prayerText.trim()) return;
@@ -1479,8 +1485,8 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
             <h3 className="font-bold text-gray-800 text-sm">Church Chat</h3>
             <p className="text-xs text-gray-400">All members</p>
           </div>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
-            {msgs.map((m, i) => {
+            <div className="flex-1 overflow-y-auto p-3 space-y-3" id="community-chat-messages">
+              {msgs.map((m, i) => {
               const own = m.author_id === user.id;
               return (
                 <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
@@ -1667,7 +1673,13 @@ function GroupsScreen({ user }: { user: User }) {
     return () => { supabase.removeChannel(channel); };
   }, [selGroup]);
 
-useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100); }, [gMsgs]);
+useEffect(() => { 
+  setTimeout(() => {
+    const el = document.getElementById('group-chat-messages');
+    if (el) el.scrollTop = el.scrollHeight;
+    endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, 300); 
+}, [gMsgs]);
 
   async function sendMsg() {
     if (!chatText.trim() || !selGroup) return;
@@ -1688,8 +1700,8 @@ useEffect(() => { setTimeout(() => endRef.current?.scrollIntoView({ behavior: 's
             <p className="text-xs text-gray-400">Group Chat</p>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          {gMsgs.map((m, i) => {
+        <div className="flex-1 overflow-y-auto p-3 space-y-3" id="group-chat-messages">
+            {gMsgs.map((m, i) => {
             const own = m.author_id === user.id;
             return (
               <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
