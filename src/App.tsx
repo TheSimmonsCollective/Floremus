@@ -1224,12 +1224,19 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
   const [joined, setJoined] = useState(false);
   const [progress, setProgress] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
 
-  useEffect(() => {
+ useEffect(() => {
     (async () => {
       const { data } = await supabase.from('challenge_participants')
         .select('*').eq('challenge_id', c.id).eq('member_id', user.id).maybeSingle();
       if (data) { setJoined(true); setProgress(data.progress || 0); }
+      const { data: lb } = await supabase.from('challenge_participants')
+        .select('progress, completed, profiles(full_name, avatar_url)')
+        .eq('challenge_id', c.id)
+        .order('progress', { ascending: false }).limit(5);
+      if (lb) setLeaderboard(lb);
     })();
   }, [c.id, user.id]);
 
@@ -1297,6 +1304,28 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
                 <div key={d} className="flex-1 h-2 rounded-full"
                   style={{ backgroundColor: d < progress ? user.church.primaryColor : '#E5E7EB' }} />
               ))}
+            </div>
+          )}
+          {leaderboard.length > 0 && (
+            <div>
+              <button onClick={() => setShowLeaderboard(!showLeaderboard)}
+                className="text-xs font-semibold mb-2 flex items-center gap-1"
+                style={{ color: user.church.primaryColor }}>
+                🏆 Leaderboard {showLeaderboard ? '∧' : '∨'}
+              </button>
+              {showLeaderboard && (
+                <div className="space-y-2 mb-3">
+                  {leaderboard.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50">
+                      <span className="text-sm w-5 text-center">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</span>
+                      <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={24} color={user.church.primaryColor} />
+                      <p className="flex-1 text-xs font-semibold text-gray-700">{p.profiles?.full_name || 'Member'}</p>
+                      <p className="text-xs text-gray-500">{p.progress}/{c.total_days || 7} days</p>
+                      {p.completed && <span className="text-xs text-green-600 font-bold">✓</span>}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {!joined ? (
@@ -2889,6 +2918,7 @@ async function sendNotification() {
 function GroupManager({ user }: { user: User }) {
   const [groups, setGroups] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
+  const [requests, setRequests] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -2903,6 +2933,11 @@ function GroupManager({ user }: { user: User }) {
     const { data: m } = await supabase.from('profiles').select('id, full_name')
       .eq('church_id', user.church.id).order('full_name', { ascending: true });
     if (m) setMembers(m);
+    const { data: r } = await supabase.from('group_join_requests')
+      .select('*, profiles(full_name, avatar_url), groups(name)')
+      .eq('church_id', user.church.id).eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (r) setRequests(r);
   }
 
   useEffect(() => { load(); }, [user.church.id]);
@@ -2971,6 +3006,35 @@ function GroupManager({ user }: { user: User }) {
               className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
               style={{ backgroundColor: user.church.primaryColor }}>Create Group</button>
           </div>
+        </div>
+      )}
+      
+      {requests.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pending Join Requests ({requests.length})</p>
+          {requests.map((r, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
+              <div className="flex items-center gap-2">
+                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
+                <div>
+                  <p className="font-semibold text-gray-800 text-sm">{r.profiles?.full_name || 'Member'}</p>
+                  <p className="text-xs text-gray-500">Wants to join {r.groups?.name}</p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={async () => {
+                  await supabase.from('group_join_requests').update({ status: 'approved' }).eq('id', r.id);
+                  await supabase.from('group_members').insert({ group_id: r.group_id, member_id: r.member_id });
+                  load();
+                }} className="px-2 py-1 rounded-lg text-white text-xs font-semibold"
+                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
+                <button onClick={async () => {
+                  await supabase.from('group_join_requests').update({ status: 'denied' }).eq('id', r.id);
+                  load();
+                }} className="px-2 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-semibold">Deny</button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
       <div className="space-y-2">
@@ -3121,6 +3185,7 @@ function ChallengeManager({ user }: { user: User }) {
 function DevotionalManager({ user }: { user: User }) {
   const [devotionals, setDevotionals] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -3135,18 +3200,35 @@ function DevotionalManager({ user }: { user: User }) {
 
   async function save() {
     if (!form.title.trim() || !form.body.trim()) { alert('Title and body are required'); return; }
-    await supabase.from('devotionals').insert({
-      church_id: user.church.id,
-      author_id: user.id,
-      day_of_week: form.day_of_week,
-      title: form.title,
-      scripture: form.scripture,
-      body: form.body,
-      reflection: form.reflection,
-    });
+    if (editingId) {
+      await supabase.from('devotionals').update({
+        day_of_week: form.day_of_week,
+        title: form.title,
+        scripture: form.scripture,
+        body: form.body,
+        reflection: form.reflection,
+      }).eq('id', editingId);
+    } else {
+      await supabase.from('devotionals').insert({
+        church_id: user.church.id,
+        author_id: user.id,
+        day_of_week: form.day_of_week,
+        title: form.title,
+        scripture: form.scripture,
+        body: form.body,
+        reflection: form.reflection,
+      });
+    }
     setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
     setAddOpen(false);
+    setEditingId(null);
     load();
+  }
+
+  function startEdit(dv: any) {
+    setForm({ day_of_week: dv.day_of_week, title: dv.title, scripture: dv.scripture || '', body: dv.body, reflection: dv.reflection || '' });
+    setEditingId(dv.id);
+    setAddOpen(true);
   }
 
   async function remove(id: string) {
@@ -3160,7 +3242,7 @@ function DevotionalManager({ user }: { user: User }) {
       <div className="bg-white rounded-2xl p-4 shadow-sm">
         <div className="flex justify-between items-center mb-1">
           <h3 className="font-bold text-gray-800">Devotionals</h3>
-          <button onClick={() => setAddOpen(!addOpen)}
+          <button onClick={() => { setAddOpen(!addOpen); setEditingId(null); setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' }); }}
             className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
             style={{ backgroundColor: user.church.primaryColor }}>+ Add</button>
         </div>
@@ -3169,6 +3251,7 @@ function DevotionalManager({ user }: { user: User }) {
 
       {addOpen && (
         <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
+          <h4 className="font-bold text-gray-800 text-sm">{editingId ? 'Edit Devotional' : 'New Devotional'}</h4>
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Day of Week</label>
             <select value={form.day_of_week} onChange={e => setForm({ ...form, day_of_week: e.target.value })}
@@ -3201,11 +3284,13 @@ function DevotionalManager({ user }: { user: User }) {
               className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
           </div>
           <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
+            <button onClick={() => { setAddOpen(false); setEditingId(null); }}
               className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
             <button onClick={save}
               className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Post Devotional</button>
+              style={{ backgroundColor: user.church.primaryColor }}>
+              {editingId ? 'Save Changes' : 'Post Devotional'}
+            </button>
           </div>
         </div>
       )}
@@ -3227,7 +3312,10 @@ function DevotionalManager({ user }: { user: User }) {
                 {dv.scripture && <p className="text-xs text-gray-500 mt-0.5 italic">{dv.scripture}</p>}
                 <p className="text-gray-600 text-xs mt-1 line-clamp-2">{dv.body}</p>
               </div>
-              <button onClick={() => remove(dv.id)} className="text-xs text-red-400 font-semibold ml-3">Delete</button>
+              <div className="flex gap-3 ml-3">
+                <button onClick={() => startEdit(dv)} className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>Edit</button>
+                <button onClick={() => remove(dv.id)} className="text-xs text-red-400 font-semibold">Delete</button>
+              </div>
             </div>
           </div>
         ))}
@@ -3235,6 +3323,7 @@ function DevotionalManager({ user }: { user: User }) {
     </div>
   );
 }
+
 function PublishedContentViewer({ user }: { user: User }) {
   const [draft, setDraft] = useState<any>(null);
   const [loading, setLoading] = useState(true);
