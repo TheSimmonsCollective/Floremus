@@ -3902,6 +3902,19 @@ function ResetPasswordScreen() {
 }
 
 // ── Main App ───────────────────────────────────────────────────────────────
+function LivePoints({ userId, initialPoints, color }: { userId: string; initialPoints: number; color: string }) {
+  const [points, setPoints] = useState(initialPoints);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const { data } = await supabase.from('profiles').select('points').eq('id', userId).maybeSingle();
+      if (data) setPoints(data.points || 0);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [userId]);
+
+  return <span className="text-xs font-semibold text-gray-500">{points.toLocaleString()} pts</span>;
+}
 function App() {
   const [user, setUser] = useState<User | null>(null);
 const [tab, setTab] = useState('home');
@@ -4158,7 +4171,7 @@ if (window.location.pathname.startsWith('/join/')) {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-gray-500">{user.points} pts</span>
+            <LivePoints userId={user.id} initialPoints={user.points} color={user.church.primaryColor} />
             <button onClick={() => setTab('more')}>
               <Avatar url={user.avatarUrl} name={user.name || user.email} size={32} color={color} />
             </button>
