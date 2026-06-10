@@ -2351,6 +2351,27 @@ function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [type, setType] = useState<'in-person' | 'livestream'>('in-person');
 
   async function checkIn() {
+    const now = new Date();
+    const { data: ch } = await supabase.from('churches').select('checkin_start, checkin_end, checkin_days').eq('id', user.church.id).maybeSingle();
+    if (ch?.checkin_start && ch?.checkin_end) {
+      const currentTime = now.getHours() * 60 + now.getMinutes();
+      const [startH, startM] = ch.checkin_start.split(':').map(Number);
+      const [endH, endM] = ch.checkin_end.split(':').map(Number);
+      const startMins = startH * 60 + startM;
+      const endMins = endH * 60 + endM;
+      if (currentTime < startMins || currentTime > endMins) {
+        alert(`Check in is only available between ${ch.checkin_start} and ${ch.checkin_end}.`);
+        return;
+      }
+      if (ch.checkin_days) {
+        const today = now.toLocaleDateString('en-US', { weekday: 'long' });
+        const allowedDays = ch.checkin_days.split(',').map((d: string) => d.trim());
+        if (!allowedDays.includes(today)) {
+          alert(`Check in is only available on ${ch.checkin_days}.`);
+          return;
+        }
+      }
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const { data: existing } = await supabase
@@ -3342,6 +3363,9 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [brandColor, setBrandColor] = useState(user.church.primaryColor);
   const [brandInitials, setBrandInitials] = useState(user.church.logoInitials);
   const [logoUrl, setLogoUrl] = useState(user.church.logoUrl || '');
+  const [checkinStart, setCheckinStart] = useState('08:00');
+  const [checkinEnd, setCheckinEnd] = useState('14:00');
+  const [checkinDays, setCheckinDays] = useState('Sunday');
   const [autoReset, setAutoReset] = useState(false);
   const [resetFreq, setResetFreq] = useState('monthly');
   const [members, setMembers] = useState<any[]>([]);
@@ -3370,6 +3394,12 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
       const { data: ps } = await supabase.from('points_settings')
         .select('*').eq('church_id', user.church.id).maybeSingle();
       if (ps) { setAutoReset(ps.auto_reset); setResetFreq(ps.reset_frequency); }
+      const { data: ch } = await supabase.from('churches').select('checkin_start, checkin_end, checkin_days').eq('id', user.church.id).maybeSingle();
+      if (ch) {
+        if (ch.checkin_start) setCheckinStart(ch.checkin_start);
+        if (ch.checkin_end) setCheckinEnd(ch.checkin_end);
+        if (ch.checkin_days) setCheckinDays(ch.checkin_days);
+      }
 
       if (isSA) {
         const { data: mb } = await supabase.from('profiles').select('*')
@@ -3503,14 +3533,39 @@ const adminTabs = ['overview', 'content', 'devotionals', 'branding', 'points', '
               </div>
             </div>
           </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Check In Window</label>
+            <p className="text-xs text-gray-400 mb-2">Members can only check in during this window.</p>
+            <div className="flex gap-2 mb-2">
+              <div className="flex-1">
+                <label className="text-xs text-gray-400">Start Time</label>
+                <input type="time" value={checkinStart} onChange={e => setCheckinStart(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-gray-400">End Time</label>
+                <input type="time" value={checkinEnd} onChange={e => setCheckinEnd(e.target.value)}
+                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+              </div>
+            </div>
+            <label className="text-xs text-gray-400">Check In Days</label>
+            <input type="text" value={checkinDays} onChange={e => setCheckinDays(e.target.value)}
+              placeholder="e.g. Sunday or Sunday,Wednesday"
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
           <button onClick={async () => {
             await supabase.from('churches').update({
               name: brandName, tagline: brandTagline,
               primary_color: brandColor, logo_initials: brandInitials,
               logo_url: logoUrl || null,
+              checkin_start: checkinStart,
+              checkin_end: checkinEnd,
+              checkin_days: checkinDays,
             }).eq('id', user.church.id);
             alert('Branding saved! Refresh to see changes.');
-          }} className="w-full py-3 rounded-xl text-white font-bold"
+          }}
+
+          className="w-full py-3 rounded-xl text-white font-bold"
             style={{ backgroundColor: user.church.primaryColor }}>
             Save Branding
           </button>
