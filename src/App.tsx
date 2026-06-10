@@ -2223,8 +2223,10 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
   const [anns, setAnns] = useState<any[]>([]);
   const [pending, setPending] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
+  const [filter, setFilter] = useState('All');
   const [form, setForm] = useState({ title: '', body: '', category: 'General' });
   const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const categories = ['All', 'General', 'Event', 'Volunteer', 'Prayer', 'Lost and Found'];
 
   async function load() {
     const { data } = await supabase.from('announcements')
@@ -2301,8 +2303,17 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
           ))}
         </div>
       )}
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {categories.map(c => (
+          <button key={c} onClick={() => setFilter(c)}
+            className="flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold"
+            style={{ backgroundColor: filter === c ? user.church.primaryColor : BRAND.white, color: filter === c ? BRAND.white : '#6B7280' }}>
+            {c}
+          </button>
+        ))}
+      </div>
       <div className="space-y-3">
-        {anns.map((a, i) => (
+        {anns.filter(a => filter === 'All' || a.category === filter).map((a, i) => (
           <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border-l-4"
             style={{ borderColor: a.pinned ? user.church.primaryColor : 'transparent' }}>
             <div className="flex justify-between items-start mb-1">
@@ -3789,6 +3800,40 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
     </div>
   );
 }
+function EmailConfirmScreen() {
+  const [count, setCount] = useState(10);
+
+  useEffect(() => {
+    if (count <= 0) { window.location.href = '/'; return; }
+    const timer = setTimeout(() => setCount(count - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [count]);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md text-center space-y-6">
+        <div className="flex justify-center">
+          <FloremusLogo size={120} variant="withTagline" />
+        </div>
+        <div className="p-6 rounded-2xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+          <p className="text-4xl mb-4">✅</p>
+          <p className="text-white font-bold text-xl mb-2">Email Confirmed!</p>
+          <p className="text-gray-400 text-sm mb-6">Your account is ready. Welcome to Floremus.</p>
+          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4"
+            style={{ borderColor: BRAND.purple }}>
+            <p className="text-white text-2xl font-bold">{count}</p>
+          </div>
+          <p className="text-gray-400 text-xs mb-4">Redirecting to sign in in {count} seconds</p>
+          <button onClick={() => window.location.href = '/'}
+            className="w-full py-3 rounded-xl font-bold text-white"
+            style={{ backgroundColor: BRAND.purple }}>
+            Sign In Now
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 function ResetPasswordScreen() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -3981,7 +4026,7 @@ function JoinScreen({ code }: { code: string }) {
 
   useEffect(() => {
     (async () => {
-      const { data: invite } = await supabase.from('invites').select('*, churches(*)').eq('code', code).eq('active', true).maybeSingle();
+const { data: invite } = await supabase.from('invites').select('*, churches(*)').eq('code', code).eq('active', true).gt('expires_at', new Date().toISOString()).maybeSingle();
       if (invite?.churches) setChurch(invite.churches);
       else alert('This invite link is invalid or has expired.');
     })();
@@ -4065,6 +4110,9 @@ function JoinScreen({ code }: { code: string }) {
   );
 }
 
+if (window.location.pathname === '/confirm') {
+    return <EmailConfirmScreen />;
+  }
   if (window.location.pathname === '/reset-password') {
     return <ResetPasswordScreen />;
   }
@@ -4111,7 +4159,7 @@ if (window.location.pathname.startsWith('/join/')) {
         </div>
 
         <div className="pb-20">
-{tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} setMoreSub={setMoreSub} />}
+          {tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} setMoreSub={setMoreSub} />}
           {tab === 'sunday' && <SundayScreen user={user} />}
           {tab === 'community' && <CommunityScreen user={user} />}
           {tab === 'groups' && <GroupsScreen user={user} />}
