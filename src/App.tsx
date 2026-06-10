@@ -559,37 +559,13 @@ function SundayScreen({ user }: { user: User }) {
           ) : (
             <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-             {sermon?.key_scriptures?.length > 0 ? (
-                <div className="space-y-3">
-                  {sermon.key_scriptures.map((s: any, i: number) => (
-                    <div key={i} className="rounded-xl p-4 border-l-4"
-                      style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                      <p className="text-sm font-bold mb-3" style={{ color: user.church.primaryColor }}>{s.reference}</p>
-                      {s.versions ? (
-                        <div className="space-y-3">
-                          {s.versions.map((v: any, j: number) => (
-                            <div key={j} className="pt-2 border-t border-purple-100 first:border-0 first:pt-0">
-                              <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white mb-1 inline-block"
-                                style={{ backgroundColor: user.church.primaryColor, opacity: 0.7 }}>
-                                {v.translation}
-                              </span>
-                              <p className="text-gray-700 text-sm italic leading-relaxed mt-1">"{v.text}"</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-gray-800 text-sm italic">"{s.text}"</p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : !sermon ? (
-                <div className="rounded-xl p-3 border-l-4"
+             {sermon?.scripture && (
+                <div className="rounded-xl p-4 border-l-4"
                   style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                  <p className="text-xs font-semibold text-gray-500 mb-1">KEY VERSE</p>
-                  <p className="text-gray-800 text-sm italic">"Walk by the Spirit, and you will not gratify the desires of the flesh." — Galatians 5:16</p>
+                  <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>KEY VERSE</p>
+                  <p className="text-gray-700 text-sm italic leading-relaxed">"{sermon.scripture}"</p>
                 </div>
-              ) : null}
+              )}
 
               {sermon?.blanks?.length > 0 && (
                 <div>
