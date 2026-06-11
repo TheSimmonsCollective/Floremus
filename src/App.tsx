@@ -119,7 +119,7 @@ function Avatar({ url, name, size = 36, color }: { url?: string; name: string; s
 }
 
 // ── Login Screen ───────────────────────────────────────────────────────────
-function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
+function ChurchRegistrationScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -127,10 +127,8 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [churchName, setChurchName] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [showCf, setShowCf] = useState(false);
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [isReset, setIsReset] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
 
   const criteria = [
     { label: 'At least 8 characters', met: password.length >= 8 },
@@ -144,19 +142,8 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const inputCls = 'w-full px-4 py-3 rounded-xl text-white border focus:outline-none focus:border-purple-400';
   const inputSty = { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' };
 
-  async function login() {
-    if (!email || !password) return;
-    setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) alert(error.message);
-    setLoading(false);
-  }
-
   async function signup() {
-    if (!email || !password || !churchName || !pastorName) {
-      alert('Please fill in all fields');
-      return;
-    }
+    if (!email || !password || !churchName || !pastorName) { alert('Please fill in all fields'); return; }
     if (!pwReady) { alert('Password does not meet all requirements'); return; }
     if (!pwMatch) { alert('Passwords do not match'); return; }
     setLoading(true);
@@ -167,14 +154,117 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
       const { data: church, error: ce } = await supabase
         .from('churches')
         .insert({ name: churchName, tagline: '', primary_color: BRAND.purple, logo_initials: initials, subscription_status: 'trial', subscription_tier: 'starter' })
-        .select()
-        .single();
+        .select().single();
       if (ce || !church) { alert('Church setup failed. Please contact support.'); setLoading(false); return; }
       await supabase.from('profiles').insert({ id: data.user.id, church_id: church.id, full_name: pastorName, role: 'super_admin', points: 0, streak: 0 });
       await supabase.from('giving_funds').insert({ church_id: church.id, name: 'General Offering', description: 'General church giving', is_default: true, is_active: true });
-      alert('Account created! Please sign in.');
-      setIsSignUp(false);
+      setDone(true);
     }
+    setLoading(false);
+  }
+
+  if (done) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
+        <div className="w-full max-w-md text-center">
+          <FloremusLogo size={140} variant="withTagline" />
+          <div className="mt-8 p-6 rounded-2xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+            <p className="text-3xl mb-3">🎉</p>
+            <p className="text-white font-bold text-xl mb-2">Welcome to Floremus!</p>
+            <p className="text-gray-400 text-sm mb-6">Your church account has been created. Sign in to get started.</p>
+            <button onClick={() => window.location.href = '/login'}
+              className="w-full py-3 rounded-xl font-bold text-white"
+              style={{ backgroundColor: BRAND.purple }}>
+              Sign In Now
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
+      <div className="w-full max-w-md">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={180} variant="withTagline" />
+        </div>
+        <h2 className="text-center text-white font-bold text-xl mb-4">Create Your Church Account</h2>
+        <div className="space-y-3">
+          <input type="text" placeholder="Your full name" value={pastorName}
+            onChange={e => setPastorName(e.target.value)} className={inputCls} style={inputSty} />
+          <input type="text" placeholder="Church name" value={churchName}
+            onChange={e => setChurchName(e.target.value)} className={inputCls} style={inputSty} />
+          <input type="email" placeholder="Email address" value={email}
+            onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
+          <div className="relative">
+            <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password}
+              onChange={e => setPassword(e.target.value)} className={inputCls + ' pr-16'} style={inputSty} />
+            <button type="button" onClick={() => setShowPw(!showPw)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
+              {showPw ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {password.length > 0 && (
+            <div className="rounded-xl p-3 space-y-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
+              <p className="text-xs font-semibold mb-1" style={{ color: BRAND.silver }}>Password requirements:</p>
+              {criteria.map((c, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.met ? '✓' : '○'}</span>
+                  <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div>
+            <div className="relative">
+              <input type={showCf ? 'text' : 'password'} placeholder="Confirm password" value={confirm}
+                onChange={e => setConfirm(e.target.value)} className={inputCls + ' pr-16'}
+                style={{ ...inputSty, borderColor: confirm.length > 0 ? (pwMatch ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.15)' }} />
+              <button type="button" onClick={() => setShowCf(!showCf)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
+                {showCf ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {confirm.length > 0 && (
+              <p className="text-xs mt-1 ml-1" style={{ color: pwMatch ? '#4ade80' : '#f87171' }}>
+                {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+              </p>
+            )}
+          </div>
+          <button onClick={signup} disabled={loading}
+            className="w-full py-3 rounded-xl font-bold text-white text-lg"
+            style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
+            {loading ? 'Creating your church...' : 'Create Church Account'}
+          </button>
+          <p className="text-center text-sm" style={{ color: BRAND.silver }}>
+            Already have an account?{' '}
+            <span className="font-semibold cursor-pointer" style={{ color: BRAND.sage }}
+              onClick={() => window.location.href = '/login'}>
+              Sign in
+            </span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [isReset, setIsReset] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const inputCls = 'w-full px-4 py-3 rounded-xl text-white border focus:outline-none focus:border-purple-400';
+  const inputSty = { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' };
+
+  async function login() {
+    if (!email || !password) return;
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) alert(error.message);
     setLoading(false);
   }
 
@@ -195,16 +285,14 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
         <div className="flex justify-center mb-6">
           <FloremusLogo size={180} variant="withTagline" />
         </div>
-
         {isReset ? (
           <div className="space-y-4">
             {resetSent ? (
               <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
                 <p className="text-white font-semibold mb-2">Reset email sent</p>
                 <p className="text-gray-400 text-sm mb-4">Check your inbox for the reset link.</p>
-                <button onClick={() => { setIsReset(false); setResetSent(false); }} className="text-sm" style={{ color: BRAND.sage }}>
-                  Back to sign in
-                </button>
+                <button onClick={() => { setIsReset(false); setResetSent(false); }}
+                  className="text-sm" style={{ color: BRAND.sage }}>Back to sign in</button>
               </div>
             ) : (
               <>
@@ -214,7 +302,8 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
                   className="w-full py-3 rounded-xl font-bold text-white" style={{ backgroundColor: BRAND.purple }}>
                   {loading ? 'Sending...' : 'Send Reset Link'}
                 </button>
-                <button onClick={() => setIsReset(false)} className="w-full text-sm text-center" style={{ color: BRAND.sage }}>
+                <button onClick={() => setIsReset(false)}
+                  className="w-full text-sm text-center" style={{ color: BRAND.sage }}>
                   Back to sign in
                 </button>
               </>
@@ -222,68 +311,32 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
           </div>
         ) : (
           <div className="space-y-3">
-            {isSignUp && (
-              <>
-                <input type="text" placeholder="Your full name" value={pastorName}
-                  onChange={e => setPastorName(e.target.value)} className={inputCls} style={inputSty} />
-                <input type="text" placeholder="Church name" value={churchName}
-                  onChange={e => setChurchName(e.target.value)} className={inputCls} style={inputSty} />
-              </>
-            )}
             <input type="email" placeholder="Email address" value={email}
               onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
             <div className="relative">
               <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password}
-                onChange={e => setPassword(e.target.value)} className={inputCls + ' pr-16'} style={inputSty} />
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') login(); }}
+                className={inputCls + ' pr-16'} style={inputSty} />
               <button type="button" onClick={() => setShowPw(!showPw)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
                 {showPw ? 'Hide' : 'Show'}
               </button>
             </div>
-            {isSignUp && password.length > 0 && (
-              <div className="rounded-xl p-3 space-y-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-                <p className="text-xs font-semibold mb-1" style={{ color: BRAND.silver }}>Password requirements:</p>
-                {criteria.map((c, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.met ? '✓' : '○'}</span>
-                    <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.label}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {isSignUp && (
-              <div>
-                <div className="relative">
-                  <input type={showCf ? 'text' : 'password'} placeholder="Confirm password" value={confirm}
-                    onChange={e => setConfirm(e.target.value)} className={inputCls + ' pr-16'}
-                    style={{ ...inputSty, borderColor: confirm.length > 0 ? (pwMatch ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.15)' }} />
-                  <button type="button" onClick={() => setShowCf(!showCf)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
-                    {showCf ? 'Hide' : 'Show'}
-                  </button>
-                </div>
-                {confirm.length > 0 && (
-                  <p className="text-xs mt-1 ml-1" style={{ color: pwMatch ? '#4ade80' : '#f87171' }}>
-                    {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
-                  </p>
-                )}
-              </div>
-            )}
-            <button onClick={isSignUp ? signup : login} disabled={loading}
+            <button onClick={login} disabled={loading}
               className="w-full py-3 rounded-xl font-bold text-white text-lg"
               style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
-              {loading ? 'Please wait...' : isSignUp ? 'Create Church Account' : 'Sign In'}
+              {loading ? 'Signing in...' : 'Sign In'}
             </button>
-            {!isSignUp && (
-              <button onClick={() => setIsReset(true)} className="w-full text-sm text-center" style={{ color: BRAND.silver }}>
-                Forgot your password?
-              </button>
-            )}
+            <button onClick={() => setIsReset(true)}
+              className="w-full text-sm text-center" style={{ color: BRAND.silver }}>
+              Forgot your password?
+            </button>
             <p className="text-center text-sm" style={{ color: BRAND.silver }}>
-              {isSignUp ? 'Already have an account? ' : 'New to Floremus? '}
+              New to Floremus?{' '}
               <span className="font-semibold cursor-pointer" style={{ color: BRAND.sage }}
-                onClick={() => { setIsSignUp(!isSignUp); setPassword(''); setConfirm(''); }}>
-                {isSignUp ? 'Sign in' : 'Create church account'}
+                onClick={() => window.location.href = '/ChurchRegistration'}>
+                Create church account
               </span>
             </p>
           </div>
@@ -4311,19 +4364,32 @@ const { data: invite } = await supabase.from('invites').select('*, churches(*)')
   );
 }
 
+if (window.location.pathname === '/ChurchRegistration') {
+  return <ChurchRegistrationScreen />;
+}
+
+if (window.location.pathname === '/login') {
+  if (user) { window.location.href = '/'; return null; }
+  return <LoginScreen onLogin={(u) => { setUser(u); }} />;
+}
+
 if (window.location.pathname === '/confirm') {
-    return <EmailConfirmScreen />;
-  }
-  if (window.location.pathname === '/reset-password') {
-    return <ResetPasswordScreen />;
-  }
+  return <EmailConfirmScreen />;
+}
+
+if (window.location.pathname === '/reset-password') {
+  return <ResetPasswordScreen />;
+}
 
 if (window.location.pathname.startsWith('/join/')) {
-    const code = window.location.pathname.split('/join/')[1];
-    return <JoinScreen code={code} />;
-  }
+  const code = window.location.pathname.split('/join/')[1];
+  return <JoinScreen code={code} />;
+}
 
-  if (!user) return <LoginScreen onLogin={setUser} />;
+if (!user) {
+  window.location.href = '/login';
+  return null;
+}
 
   if (user.church.subscriptionStatus !== 'active') {
     return <PaywallScreen user={user} />;
