@@ -2370,6 +2370,7 @@ function CommunityScreen({ user }: { user: User }) {
   const [isPrivate, setIsPrivate] = useState(false);
   const [prayerMedia, setPrayerMedia] = useState<{ url: string; type: string } | null>(null);
   const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
   const color = user.church.primaryColor;
 
   async function load() {
@@ -2405,6 +2406,9 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
   useEffect(() => {
+    useEffect(() => {
+  chatEndRef.current?.scrollIntoView();
+}, [msgs]);
     load();
     const channel = supabase.channel('community-chat')
       .on('postgres_changes', {
@@ -2603,11 +2607,11 @@ function CommunityScreen({ user }: { user: User }) {
 
             {/* Messages newest at bottom, flex-col-reverse for scroll */}
             <div
-              className="flex-1 overflow-y-auto p-4 flex flex-col-reverse"
-              style={{ gap: 12 }}
-            >
-              <div>
-                {msgs.map((m, i) => {
+  className="flex-1 overflow-y-auto p-4"
+  style={{ gap: 12, display: 'flex', flexDirection: 'column' }}
+>
+  <div>
+    {[...msgs].reverse().map((m, i) => {
                   const own = m.author_id === user.id;
                   return (
                     <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
@@ -2637,6 +2641,7 @@ function CommunityScreen({ user }: { user: User }) {
                     </div>
                   );
                 })}
+             <div ref={chatEndRef} />
               </div>
             </div>
 
@@ -2899,9 +2904,9 @@ function GroupsScreen({ user }: { user: User }) {
         </div>
 
         {/* Messages newest at bottom using flex-col-reverse */}
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col-reverse">
-          <div>
-            {gMsgs.map((m, i) => {
+        <div className="flex-1 overflow-y-auto p-4" style={{ display: 'flex', flexDirection: 'column' }}>
+  <div>
+    {[...gMsgs].reverse().map((m, i) => {
               const own = m.author_id === user.id;
               return (
                 <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
