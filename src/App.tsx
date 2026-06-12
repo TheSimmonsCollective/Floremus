@@ -5038,7 +5038,7 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
       ],
     },
   ];
-  
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -5914,9 +5914,9 @@ function App() {
 
   // ── Route: Login ───────────────────────────────────────────────────────
   if (window.location.pathname === '/login') {
-    if (user) { window.location.href = '/'; return null; }
-    return <LoginScreen onLogin={(u) => { setUser(u); }} />;
-  }
+  if (user) { window.location.href = '/app'; return null; }
+  return <LoginScreen onLogin={(u) => { setUser(u); window.location.href = '/app'; }} />;
+}
 
   // ── Route: Email Confirm ───────────────────────────────────────────────
   if (window.location.pathname === '/confirm') {
