@@ -1,7 +1,10 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from './supabase';
 import { QRCodeSVG } from 'qrcode.react';
+
+// ── Google Fonts (add to public/index.html head if not already there) ──────
+// <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
 
 // ── Brand ──────────────────────────────────────────────────────────────────
 const BRAND = {
@@ -11,6 +14,10 @@ const BRAND = {
   silver: '#C0C6CC',
   white: '#FFFFFF',
   bg: '#F9FAFB',
+  cardBorder: 'rgba(107,33,168,0.08)',
+  shadowSm: '0 2px 8px rgba(107,33,168,0.06)',
+  shadowMd: '0 4px 20px rgba(107,33,168,0.1)',
+  shadowLg: '0 8px 40px rgba(107,33,168,0.15)',
 };
 
 const LOGOS = {
@@ -19,6 +26,19 @@ const LOGOS = {
   withTagline: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/FloremusLogoWithTagline.png',
   seal: 'https://cjnzizyxjoqmmnksfitd.supabase.co/storage/v1/object/public/church-logos/ChatGPT%20Image%20Jun%202,%202026,%2011_55_40%20PM.png',
 };
+
+// ── Luxury style helpers ───────────────────────────────────────────────────
+const luxuryBtn = (color: string) => ({
+  background: `linear-gradient(135deg, ${color}, ${color}dd)`,
+  boxShadow: `0 4px 16px ${color}40`,
+});
+
+const cardStyle = (color: string) => ({
+  background: BRAND.white,
+  borderRadius: 20,
+  border: `1px solid ${color}18`,
+  boxShadow: `0 2px 12px ${color}0d`,
+});
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Church {
@@ -31,6 +51,7 @@ interface Church {
   logoUrl?: string;
   subscriptionStatus?: string;
   subscriptionTier?: string;
+  givingStripeLink?: string;
 }
 
 interface User {
@@ -38,6 +59,8 @@ interface User {
   name: string;
   email: string;
   role: 'super_admin' | 'admin' | 'group_leader' | 'children_worker' | 'member';
+  secondaryRole?: string;
+  secondaryRole2?: string;
   points: number;
   streak: number;
   church: Church;
@@ -45,6 +68,7 @@ interface User {
   directoryOptIn?: boolean;
   bio?: string;
   phone?: string;
+  birthday?: string;
 }
 
 interface Message {
@@ -55,6 +79,8 @@ interface Message {
   author_avatar?: string;
   created_at: string;
   group_id?: string | null;
+  media_url?: string;
+  media_type?: string;
 }
 
 interface GivingFund {
@@ -66,10 +92,15 @@ interface GivingFund {
 }
 
 interface TheologySettings {
-  denomination: string; statement_of_faith: string;
-  bible_translation: string; worship_style: string;
-  theological_positions: string; restricted_topics: string;
-  translation_1: string; translation_2: string; translation_3: string;
+  denomination: string;
+  statement_of_faith: string;
+  bible_translation: string;
+  worship_style: string;
+  theological_positions: string;
+  restricted_topics: string;
+  translation_1: string;
+  translation_2: string;
+  translation_3: string;
   writing_tone: string;
 }
 
@@ -86,39 +117,352 @@ interface SermonDraft {
   status: string;
 }
 
+// ── Permission helpers ─────────────────────────────────────────────────────
+function isAdmin(user: User): boolean {
+  return user.role === 'super_admin' || user.role === 'admin';
+}
+
+function isGroupLeader(user: User): boolean {
+  return isAdmin(user) || user.role === 'group_leader' ||
+    user.secondaryRole === 'group_leader' || user.secondaryRole2 === 'group_leader';
+}
+
+function isChildrenWorker(user: User): boolean {
+  return isAdmin(user) || user.role === 'children_worker' ||
+    user.secondaryRole === 'children_worker' || user.secondaryRole2 === 'children_worker';
+}
+
+// ── Media upload helper ────────────────────────────────────────────────────
+async function uploadMedia(file: File, folder: string): Promise<{ url: string; type: string } | null> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const { error } = await supabase.storage.from('media').upload(path, file, { upsert: false });
+  if (error) return null;
+  const { data } = supabase.storage.from('media').getPublicUrl(path);
+  let type = 'image';
+  if (['mp4', 'mov', 'webm', 'avi'].includes(ext)) type = 'video';
+  else if (ext === 'pdf') type = 'pdf';
+  return { url: data.publicUrl, type };
+}
+
+// ── Media picker component ─────────────────────────────────────────────────
+function MediaPicker({ onUpload, folder = 'general' }: { onUpload: (url: string, type: string) => void; folder?: string }) {
+  const ref = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  async function handle(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const result = await uploadMedia(file, folder);
+    if (result) onUpload(result.url, result.type);
+    setUploading(false);
+  }
+
+  return (
+    <div>
+      <input ref={ref} type="file" accept="image/*,video/*,.pdf" className="hidden" onChange={handle} />
+      <button
+        onClick={() => ref.current?.click()}
+        disabled={uploading}
+        className="flex items-center gap-2 px-3 py-2 rounded-xl border text-sm font-semibold"
+        style={{ color: BRAND.purple, borderColor: `${BRAND.purple}30`, background: `${BRAND.purple}08` }}
+      >
+        {uploading ? '⏳ Uploading...' : '📎 Attach media'}
+      </button>
+    </div>
+  );
+}
+
+// ── Media display component ────────────────────────────────────────────────
+function MediaDisplay({ url, type }: { url: string; type: string }) {
+  if (!url) return null;
+  if (type === 'image') {
+    return (
+      <img
+        src={url} alt="attachment"
+        className="w-full rounded-xl mt-2 object-cover"
+        style={{ maxHeight: 240 }}
+      />
+    );
+  }
+  if (type === 'video') {
+    return (
+      <video
+        src={url} controls
+        className="w-full rounded-xl mt-2"
+        style={{ maxHeight: 240 }}
+      />
+    );
+  }
+  if (type === 'pdf') {
+    return (
+      <a
+        href={url} target="_blank" rel="noreferrer"
+        className="flex items-center gap-2 mt-2 px-3 py-2 rounded-xl text-sm font-semibold"
+        style={{ background: `${BRAND.purple}10`, color: BRAND.purple }}
+      >
+        📄 View PDF
+      </a>
+    );
+  }
+  return null;
+}
+
 // ── Helper Components ──────────────────────────────────────────────────────
 function FloremusLogo({ size = 80, variant = 'silver' }: { size?: number; variant?: keyof typeof LOGOS }) {
   return (
     <img
       src={LOGOS[variant]}
       alt="Floremus"
-      style={{ width: size, height: size, objectFit: 'contain' }}
+      style={{ width: size, height: 'auto', objectFit: 'contain' }}
     />
   );
 }
 
 function Avatar({ url, name, size = 36, color }: { url?: string; name: string; size?: number; color?: string }) {
+  const ringColor = color || BRAND.purple;
+  const ringSize = Math.max(2, size * 0.055);
+  const containerSize = size + ringSize * 2 + 4;
+
   if (url) {
     return (
-      <img
-        src={url}
-        alt={name}
-        className="rounded-full object-cover flex-shrink-0"
-        style={{ width: size, height: size }}
-      />
+      <div
+        className="flex-shrink-0 rounded-full flex items-center justify-center"
+        style={{
+          width: containerSize,
+          height: containerSize,
+          background: `linear-gradient(135deg, ${ringColor}, ${ringColor}aa)`,
+          padding: ringSize + 2,
+        }}
+      >
+        <img
+          src={url} alt={name}
+          className="rounded-full object-cover w-full h-full"
+        />
+      </div>
     );
   }
+
   return (
     <div
-      className="rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
-      style={{ width: size, height: size, backgroundColor: color || BRAND.purple, fontSize: Math.max(10, size * 0.35) }}
+      className="rounded-full flex items-center justify-center flex-shrink-0"
+      style={{
+        width: containerSize,
+        height: containerSize,
+        background: `linear-gradient(135deg, ${ringColor}, ${ringColor}bb)`,
+        padding: ringSize + 2,
+      }}
     >
-      {(name || '?').charAt(0).toUpperCase()}
+      <div
+        className="rounded-full flex items-center justify-center text-white font-bold w-full h-full"
+        style={{
+          background: `linear-gradient(135deg, ${ringColor}dd, ${ringColor})`,
+          fontFamily: "'DM Sans', sans-serif",
+          fontSize: Math.max(10, size * 0.38),
+        }}
+      >
+        {(name || '?').charAt(0).toUpperCase()}
+      </div>
     </div>
   );
 }
 
-// ── Login Screen ───────────────────────────────────────────────────────────
+// ── Screen header with gradient accent ────────────────────────────────────
+function ScreenHeader({ title, subtitle, color, children }: {
+  title: string;
+  subtitle?: string;
+  color: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="px-4 pt-5 pb-4 mb-2"
+      style={{
+        background: `linear-gradient(160deg, ${color}14 0%, ${BRAND.bg} 100%)`,
+        borderBottom: `1px solid ${color}18`,
+      }}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <h1
+            className="font-bold text-gray-900"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28, letterSpacing: '-0.3px' }}
+          >
+            {title}
+          </h1>
+          {subtitle && <p className="text-xs mt-0.5" style={{ color: `${color}bb` }}>{subtitle}</p>}
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ── Luxury card ────────────────────────────────────────────────────────────
+function LuxCard({ children, color, style, className }: {
+  children: React.ReactNode;
+  color: string;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
+  return (
+    <div
+      className={className}
+      style={{
+        ...cardStyle(color),
+        padding: 16,
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ── Luxury button ──────────────────────────────────────────────────────────
+function LuxBtn({
+  children, onClick, color, variant = 'primary', disabled, className, style,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  color: string;
+  variant?: 'primary' | 'outline' | 'ghost' | 'danger';
+  disabled?: boolean;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
+  const base: React.CSSProperties = {
+    fontFamily: "'DM Sans', sans-serif",
+    fontWeight: 600,
+    fontSize: 14,
+    borderRadius: 12,
+    padding: '11px 20px',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.6 : 1,
+    transition: 'all 0.2s',
+    border: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    ...style,
+  };
+
+  const variants: Record<string, React.CSSProperties> = {
+    primary: {
+      ...luxuryBtn(color),
+      color: BRAND.white,
+    },
+    outline: {
+      background: 'transparent',
+      border: `1.5px solid ${color}`,
+      color: color,
+    },
+    ghost: {
+      background: `${color}10`,
+      color: color,
+      border: 'none',
+    },
+    danger: {
+      background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+      color: BRAND.white,
+      boxShadow: '0 4px 12px rgba(239,68,68,0.3)',
+    },
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={className}
+      style={{ ...base, ...variants[variant] }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ── Section label ──────────────────────────────────────────────────────────
+function SectionLabel({ children, color }: { children: React.ReactNode; color: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <div style={{ width: 3, height: 16, borderRadius: 2, background: color }} />
+      <p
+        className="font-semibold text-gray-500 uppercase tracking-widest"
+        style={{ fontSize: 10, fontFamily: "'DM Sans', sans-serif" }}
+      >
+        {children}
+      </p>
+    </div>
+  );
+}
+
+// ── Stat pill ──────────────────────────────────────────────────────────────
+function StatPill({ icon, value, label, color }: { icon: string; value: string | number; label: string; color: string }) {
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 rounded-2xl"
+      style={{ background: `${color}0d`, border: `1px solid ${color}18` }}
+    >
+      <span style={{ fontSize: 16 }}>{icon}</span>
+      <div>
+        <p className="font-bold text-gray-800 leading-none" style={{ fontSize: 15, fontFamily: "'Cormorant Garamond', serif" }}>{value}</p>
+        <p className="text-gray-400 leading-none mt-0.5" style={{ fontSize: 10 }}>{label}</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Empty state ────────────────────────────────────────────────────────────
+function EmptyState({ icon, message }: { icon: string; message: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 gap-3">
+      <span style={{ fontSize: 40, opacity: 0.4 }}>{icon}</span>
+      <p className="text-gray-400 text-sm text-center">{message}</p>
+    </div>
+  );
+}
+
+// ── Back header ────────────────────────────────────────────────────────────
+function BackHeader({ title, onBack, color }: { title: string; onBack: () => void; color: string }) {
+  return (
+    <div className="flex items-center gap-3 px-4 pt-5 pb-3" style={{ borderBottom: `1px solid ${color}15` }}>
+      <button
+        onClick={onBack}
+        className="flex items-center justify-center rounded-full"
+        style={{ width: 36, height: 36, background: `${color}12`, color }}
+      >
+        ‹
+      </button>
+      <h2
+        className="font-bold text-gray-900"
+        style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24 }}
+      >
+        {title}
+      </h2>
+    </div>
+  );
+}
+
+// ── Toast notification ─────────────────────────────────────────────────────
+function Toast({ message, color, onClose }: { message: string; color: string; onClose: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3000);
+    return () => clearTimeout(t);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed bottom-24 left-4 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-2xl shadow-lg"
+      style={{ ...luxuryBtn(color), color: BRAND.white, fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}
+    >
+      <span>✓</span>
+      <span className="font-semibold">{message}</span>
+    </div>
+  );
+}
+// ── Church Registration Screen ─────────────────────────────────────────────
 function ChurchRegistrationScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -129,6 +473,7 @@ function ChurchRegistrationScreen() {
   const [showCf, setShowCf] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const [step, setStep] = useState<1 | 2>(1);
 
   const criteria = [
     { label: 'At least 8 characters', met: password.length >= 8 },
@@ -139,11 +484,24 @@ function ChurchRegistrationScreen() {
   const pwMatch = password === confirm && confirm.length > 0;
   const pwReady = criteria.every(c => c.met);
 
-  const inputCls = 'w-full px-4 py-3 rounded-xl text-white border focus:outline-none focus:border-purple-400';
-  const inputSty = { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' };
+  const inputBase: React.CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 14,
+    border: '1.5px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.07)',
+    color: BRAND.white,
+    fontSize: 15,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    transition: 'border-color 0.2s',
+  };
 
   async function signup() {
-    if (!email || !password || !churchName || !pastorName) { alert('Please fill in all fields'); return; }
+    if (!email || !password || !churchName || !pastorName) {
+      alert('Please fill in all fields');
+      return;
+    }
     if (!pwReady) { alert('Password does not meet all requirements'); return; }
     if (!pwMatch) { alert('Passwords do not match'); return; }
     setLoading(true);
@@ -153,11 +511,36 @@ function ChurchRegistrationScreen() {
       const initials = churchName.split(' ').map((w: string) => w[0] || '').join('').slice(0, 2).toUpperCase();
       const { data: church, error: ce } = await supabase
         .from('churches')
-        .insert({ name: churchName, tagline: '', primary_color: BRAND.purple, logo_initials: initials, subscription_status: 'trial', subscription_tier: 'starter' })
-        .select().single();
-      if (ce || !church) { alert('Church setup failed. Please contact support.'); setLoading(false); return; }
-      await supabase.from('profiles').insert({ id: data.user.id, church_id: church.id, full_name: pastorName, role: 'super_admin', points: 0, streak: 0 });
-      await supabase.from('giving_funds').insert({ church_id: church.id, name: 'General Offering', description: 'General church giving', is_default: true, is_active: true });
+        .insert({
+          name: churchName,
+          tagline: '',
+          primary_color: BRAND.purple,
+          logo_initials: initials,
+          subscription_status: 'trial',
+          subscription_tier: 'starter',
+        })
+        .select()
+        .single();
+      if (ce || !church) {
+        alert('Church setup failed. Please contact support.');
+        setLoading(false);
+        return;
+      }
+      await supabase.from('profiles').insert({
+        id: data.user.id,
+        church_id: church.id,
+        full_name: pastorName,
+        role: 'super_admin',
+        points: 0,
+        streak: 0,
+      });
+      await supabase.from('giving_funds').insert({
+        church_id: church.id,
+        name: 'General Offering',
+        description: 'General church giving',
+        is_default: true,
+        is_active: true,
+      });
       setDone(true);
     }
     setLoading(false);
@@ -165,16 +548,36 @@ function ChurchRegistrationScreen() {
 
   if (done) {
     return (
-      <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
-        <div className="w-full max-w-md text-center">
+      <div
+        className="min-h-screen flex items-center justify-center px-6"
+        style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+      >
+        {/* Glow orb */}
+        <div style={{ position: 'fixed', top: '20%', left: '50%', transform: 'translateX(-50%)', width: 400, height: 400, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.25) 0%, transparent 70%)', pointerEvents: 'none' }} />
+        <div className="w-full max-w-md text-center relative z-10">
           <FloremusLogo size={140} variant="withTagline" />
-          <div className="mt-8 p-6 rounded-2xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-            <p className="text-3xl mb-3">🎉</p>
-            <p className="text-white font-bold text-xl mb-2">Welcome to Floremus!</p>
-            <p className="text-gray-400 text-sm mb-6">Your church account has been created. Sign in to get started.</p>
-            <button onClick={() => window.location.href = '/login'}
-              className="w-full py-3 rounded-xl font-bold text-white"
-              style={{ backgroundColor: BRAND.purple }}>
+          <div
+            className="mt-8 p-8 rounded-3xl"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', backdropFilter: 'blur(20px)' }}
+          >
+            <div style={{ fontSize: 52, marginBottom: 16 }}>🎉</div>
+            <h2
+              className="text-white font-bold mb-3"
+              style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32 }}
+            >
+              Welcome to Floremus!
+            </h2>
+            <p className="text-gray-400 mb-2" style={{ fontSize: 15 }}>
+              Your church account has been created.
+            </p>
+            <p className="mb-8" style={{ fontSize: 13, color: 'rgba(192,198,204,0.6)' }}>
+              Check your email to confirm your account, then sign in.
+            </p>
+            <button
+              onClick={() => window.location.href = '/login'}
+              className="w-full py-4 rounded-2xl font-bold text-white"
+              style={{ ...luxuryBtn(BRAND.purple), fontSize: 16, fontFamily: "'DM Sans', sans-serif" }}
+            >
               Sign In Now
             </button>
           </div>
@@ -184,71 +587,237 @@ function ChurchRegistrationScreen() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-6">
-          <FloremusLogo size={180} variant="withTagline" />
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      {/* Background glow orbs */}
+      <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.2) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', bottom: '10%', right: '-10%', width: 300, height: 300, borderRadius: '50%', background: 'radial-gradient(circle, rgba(143,163,130,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex justify-center mb-8">
+          <FloremusLogo size={160} variant="withTagline" />
         </div>
-        <h2 className="text-center text-white font-bold text-xl mb-4">Create Your Church Account</h2>
-        <div className="space-y-3">
-          <input type="text" placeholder="Your full name" value={pastorName}
-            onChange={e => setPastorName(e.target.value)} className={inputCls} style={inputSty} />
-          <input type="text" placeholder="Church name" value={churchName}
-            onChange={e => setChurchName(e.target.value)} className={inputCls} style={inputSty} />
-          <input type="email" placeholder="Email address" value={email}
-            onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
-          <div className="relative">
-            <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password}
-              onChange={e => setPassword(e.target.value)} className={inputCls + ' pr-16'} style={inputSty} />
-            <button type="button" onClick={() => setShowPw(!showPw)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
-              {showPw ? 'Hide' : 'Show'}
-            </button>
-          </div>
-          {password.length > 0 && (
-            <div className="rounded-xl p-3 space-y-1" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-              <p className="text-xs font-semibold mb-1" style={{ color: BRAND.silver }}>Password requirements:</p>
-              {criteria.map((c, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.met ? '✓' : '○'}</span>
-                  <span className="text-xs" style={{ color: c.met ? '#4ade80' : '#6b7280' }}>{c.label}</span>
-                </div>
-              ))}
+
+        {/* Step indicator */}
+        <div className="flex items-center justify-center gap-3 mb-8">
+          {[1, 2].map(s => (
+            <div key={s} className="flex items-center gap-3">
+              <div
+                className="flex items-center justify-center rounded-full font-bold"
+                style={{
+                  width: 32,
+                  height: 32,
+                  background: step >= s ? `linear-gradient(135deg, ${BRAND.purple}, #9333EA)` : 'rgba(255,255,255,0.1)',
+                  color: step >= s ? BRAND.white : 'rgba(255,255,255,0.4)',
+                  fontSize: 13,
+                  fontFamily: "'DM Sans', sans-serif",
+                  transition: 'all 0.3s',
+                  boxShadow: step >= s ? `0 4px 14px ${BRAND.purple}50` : 'none',
+                }}
+              >
+                {step > s ? '✓' : s}
+              </div>
+              {s < 2 && (
+                <div style={{ width: 40, height: 1.5, background: step > s ? `linear-gradient(90deg, ${BRAND.purple}, #9333EA)` : 'rgba(255,255,255,0.15)', borderRadius: 2, transition: 'all 0.3s' }} />
+              )}
             </div>
-          )}
-          <div>
-            <div className="relative">
-              <input type={showCf ? 'text' : 'password'} placeholder="Confirm password" value={confirm}
-                onChange={e => setConfirm(e.target.value)} className={inputCls + ' pr-16'}
-                style={{ ...inputSty, borderColor: confirm.length > 0 ? (pwMatch ? '#4ade80' : '#f87171') : 'rgba(255,255,255,0.15)' }} />
-              <button type="button" onClick={() => setShowCf(!showCf)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
-                {showCf ? 'Hide' : 'Show'}
+          ))}
+        </div>
+
+        <div
+          className="rounded-3xl p-8"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}
+        >
+          <h2
+            className="text-white font-bold mb-1 text-center"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}
+          >
+            {step === 1 ? 'About Your Church' : 'Create Your Login'}
+          </h2>
+          <p className="text-center mb-6" style={{ color: 'rgba(192,198,204,0.6)', fontSize: 14 }}>
+            {step === 1 ? 'Tell us about your ministry' : 'Secure your account'}
+          </p>
+
+          {step === 1 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                  Your Full Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="Pastor John Smith"
+                  value={pastorName}
+                  onChange={e => setPastorName(e.target.value)}
+                  style={inputBase}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                  Church Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="Grace Community Church"
+                  value={churchName}
+                  onChange={e => setChurchName(e.target.value)}
+                  style={inputBase}
+                />
+              </div>
+              <button
+                onClick={() => {
+                  if (!pastorName || !churchName) { alert('Please fill in both fields'); return; }
+                  setStep(2);
+                }}
+                className="w-full py-4 rounded-2xl font-bold text-white mt-2"
+                style={{ ...luxuryBtn(BRAND.purple), fontSize: 15, fontFamily: "'DM Sans', sans-serif" }}
+              >
+                Continue
               </button>
             </div>
-            {confirm.length > 0 && (
-              <p className="text-xs mt-1 ml-1" style={{ color: pwMatch ? '#4ade80' : '#f87171' }}>
-                {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
-              </p>
-            )}
-          </div>
-          <button onClick={signup} disabled={loading}
-            className="w-full py-3 rounded-xl font-bold text-white text-lg"
-            style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
-            {loading ? 'Creating your church...' : 'Create Church Account'}
-          </button>
-          <p className="text-center text-sm" style={{ color: BRAND.silver }}>
-            Already have an account?{' '}
-            <span className="font-semibold cursor-pointer" style={{ color: BRAND.sage }}
-              onClick={() => window.location.href = '/login'}>
-              Sign in
-            </span>
-          </p>
+          )}
+
+          {step === 2 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                  Email Address
+                </label>
+                <input
+                  type="email"
+                  placeholder="pastor@church.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  style={inputBase}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                  Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showPw ? 'text' : 'password'}
+                    placeholder="Create a strong password"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    style={{ ...inputBase, paddingRight: 60 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPw(!showPw)}
+                    style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+                  >
+                    {showPw ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+
+              {password.length > 0 && (
+                <div
+                  className="rounded-2xl p-4"
+                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                >
+                  <p style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10, fontFamily: "'DM Sans', sans-serif" }}>
+                    Password strength
+                  </p>
+                  <div style={{ display: 'flex', gap: 4, marginBottom: 10 }}>
+                    {criteria.map((c, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          flex: 1,
+                          height: 3,
+                          borderRadius: 2,
+                          background: c.met ? `linear-gradient(90deg, ${BRAND.purple}, #9333EA)` : 'rgba(255,255,255,0.1)',
+                          transition: 'background 0.3s',
+                        }}
+                      />
+                    ))}
+                  </div>
+                  {criteria.map((c, i) => (
+                    <div key={i} className="flex items-center gap-2 mb-1">
+                      <span style={{ fontSize: 11, color: c.met ? '#4ade80' : 'rgba(255,255,255,0.3)' }}>{c.met ? '✓' : '○'}</span>
+                      <span style={{ fontSize: 12, color: c.met ? '#4ade80' : 'rgba(255,255,255,0.4)', fontFamily: "'DM Sans', sans-serif" }}>{c.label}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                  Confirm Password
+                </label>
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type={showCf ? 'text' : 'password'}
+                    placeholder="Repeat your password"
+                    value={confirm}
+                    onChange={e => setConfirm(e.target.value)}
+                    style={{
+                      ...inputBase,
+                      paddingRight: 60,
+                      borderColor: confirm.length > 0
+                        ? (pwMatch ? 'rgba(74,222,128,0.5)' : 'rgba(248,113,113,0.5)')
+                        : 'rgba(255,255,255,0.15)',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCf(!showCf)}
+                    style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+                  >
+                    {showCf ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+                {confirm.length > 0 && (
+                  <p style={{ fontSize: 12, marginTop: 6, marginLeft: 4, color: pwMatch ? '#4ade80' : '#f87171', fontFamily: "'DM Sans', sans-serif" }}>
+                    {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex gap-3 mt-2">
+                <button
+                  onClick={() => setStep(1)}
+                  style={{ flex: 1, padding: '14px 0', borderRadius: 14, border: '1.5px solid rgba(255,255,255,0.15)', background: 'transparent', color: 'rgba(255,255,255,0.6)', fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={signup}
+                  disabled={loading}
+                  style={{ flex: 2, padding: '14px 0', borderRadius: 14, ...luxuryBtn(BRAND.purple), color: BRAND.white, fontSize: 15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, fontFamily: "'DM Sans', sans-serif", border: 'none' }}
+                >
+                  {loading ? 'Creating your church...' : 'Create Church Account'}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
+
+        <p className="text-center mt-6" style={{ color: 'rgba(192,198,204,0.5)', fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>
+          Already have an account?{' '}
+          <span
+            className="font-semibold cursor-pointer"
+            style={{ color: BRAND.sage }}
+            onClick={() => window.location.href = '/login'}
+          >
+            Sign in
+          </span>
+        </p>
+
+        <p className="text-center mt-4" style={{ color: 'rgba(192,198,204,0.3)', fontSize: 12, fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic' }}>
+          Floremus · We will flourish
+        </p>
       </div>
     </div>
   );
 }
+
+// ── Login Screen ───────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -257,8 +826,19 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   const [resetSent, setResetSent] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const inputCls = 'w-full px-4 py-3 rounded-xl text-white border focus:outline-none focus:border-purple-400';
-  const inputSty = { backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' };
+  const inputBase: React.CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 14,
+    border: '1.5px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.07)',
+    color: BRAND.white,
+    fontSize: 15,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    transition: 'border-color 0.2s',
+    boxSizing: 'border-box',
+  };
 
   async function login() {
     if (!email || !password) return;
@@ -280,88 +860,260 @@ function LoginScreen({ onLogin }: { onLogin: (u: User) => void }) {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-6">
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      {/* Background glow orbs */}
+      <div style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', bottom: '5%', left: '-15%', width: 350, height: 350, borderRadius: '50%', background: 'radial-gradient(circle, rgba(143,163,130,0.07) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-10">
           <FloremusLogo size={180} variant="withTagline" />
+          <p
+            className="mt-4"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.5)', fontSize: 15, letterSpacing: '0.05em' }}
+          >
+            Floremus · We will flourish
+          </p>
         </div>
-        {isReset ? (
-          <div className="space-y-4">
-            {resetSent ? (
-              <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-                <p className="text-white font-semibold mb-2">Reset email sent</p>
-                <p className="text-gray-400 text-sm mb-4">Check your inbox for the reset link.</p>
-                <button onClick={() => { setIsReset(false); setResetSent(false); }}
-                  className="text-sm" style={{ color: BRAND.sage }}>Back to sign in</button>
-              </div>
-            ) : (
-              <>
-                <input type="email" placeholder="Email address" value={email}
-                  onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
-                <button onClick={resetPassword} disabled={loading}
-                  className="w-full py-3 rounded-xl font-bold text-white" style={{ backgroundColor: BRAND.purple }}>
-                  {loading ? 'Sending...' : 'Send Reset Link'}
-                </button>
-                <button onClick={() => setIsReset(false)}
-                  className="w-full text-sm text-center" style={{ color: BRAND.sage }}>
-                  Back to sign in
-                </button>
-              </>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <input type="email" placeholder="Email address" value={email}
-              onChange={e => setEmail(e.target.value)} className={inputCls} style={inputSty} />
-            <div className="relative">
-              <input type={showPw ? 'text' : 'password'} placeholder="Password" value={password}
-                onChange={e => setPassword(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') login(); }}
-                className={inputCls + ' pr-16'} style={inputSty} />
-              <button type="button" onClick={() => setShowPw(!showPw)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold" style={{ color: BRAND.sage }}>
-                {showPw ? 'Hide' : 'Show'}
-              </button>
+
+        {/* Card */}
+        <div
+          className="rounded-3xl p-8"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(24px)' }}
+        >
+          {isReset ? (
+            <div>
+              <h2
+                className="text-white font-bold mb-1 text-center"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}
+              >
+                Reset Password
+              </h2>
+              <p className="text-center mb-6" style={{ color: 'rgba(192,198,204,0.6)', fontSize: 14 }}>
+                We will send a reset link to your email
+              </p>
+              {resetSent ? (
+                <div className="text-center py-6">
+                  <div style={{ fontSize: 48, marginBottom: 16 }}>📬</div>
+                  <p className="text-white font-semibold mb-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22 }}>Check your inbox</p>
+                  <p className="mb-6" style={{ color: 'rgba(192,198,204,0.6)', fontSize: 14 }}>A reset link is on its way</p>
+                  <button
+                    onClick={() => { setIsReset(false); setResetSent(false); }}
+                    style={{ background: 'none', border: 'none', color: BRAND.sage, fontSize: 14, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <input
+                    type="email"
+                    placeholder="Your email address"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    style={inputBase}
+                  />
+                  <button
+                    onClick={resetPassword}
+                    disabled={loading}
+                    style={{ width: '100%', padding: '14px 0', borderRadius: 14, ...luxuryBtn(BRAND.purple), color: BRAND.white, fontSize: 15, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, fontFamily: "'DM Sans', sans-serif", border: 'none' }}
+                  >
+                    {loading ? 'Sending...' : 'Send Reset Link'}
+                  </button>
+                  <button
+                    onClick={() => setIsReset(false)}
+                    style={{ background: 'none', border: 'none', color: 'rgba(192,198,204,0.6)', fontSize: 14, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", textAlign: 'center' }}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              )}
             </div>
-            <button onClick={login} disabled={loading}
-              className="w-full py-3 rounded-xl font-bold text-white text-lg"
-              style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </button>
-            <button onClick={() => setIsReset(true)}
-              className="w-full text-sm text-center" style={{ color: BRAND.silver }}>
-              Forgot your password?
-            </button>
-            <p className="text-center text-sm" style={{ color: BRAND.silver }}>
-              New to Floremus?{' '}
-              <span className="font-semibold cursor-pointer" style={{ color: BRAND.sage }}
-                onClick={() => window.location.href = '/ChurchRegistration'}>
-                Create church account
-              </span>
-            </p>
-          </div>
-        )}
+          ) : (
+            <div>
+              <h2
+                className="text-white font-bold mb-1 text-center"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30 }}
+              >
+                Welcome Back
+              </h2>
+              <p className="text-center mb-7" style={{ color: 'rgba(192,198,204,0.6)', fontSize: 14 }}>
+                Sign in to your church community
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="your@email.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    style={inputBase}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>
+                    Password
+                  </label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPw ? 'text' : 'password'}
+                      placeholder="Your password"
+                      value={password}
+                      onChange={e => setPassword(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') login(); }}
+                      style={{ ...inputBase, paddingRight: 60 }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPw(!showPw)}
+                      style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+                    >
+                      {showPw ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  onClick={login}
+                  disabled={loading}
+                  style={{ width: '100%', padding: '15px 0', borderRadius: 14, ...luxuryBtn(BRAND.purple), color: BRAND.white, fontSize: 16, fontWeight: 700, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1, fontFamily: "'DM Sans', sans-serif", border: 'none', marginTop: 4 }}
+                >
+                  {loading ? 'Signing in...' : 'Sign In'}
+                </button>
+
+                <button
+                  onClick={() => setIsReset(true)}
+                  style={{ background: 'none', border: 'none', color: 'rgba(192,198,204,0.6)', fontSize: 14, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", textAlign: 'center' }}
+                >
+                  Forgot your password?
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div className="flex items-center gap-4 my-6">
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+          <span style={{ color: 'rgba(192,198,204,0.4)', fontSize: 12, fontFamily: "'DM Sans', sans-serif" }}>New to Floremus?</span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.08)' }} />
+        </div>
+
+        <button
+          onClick={() => window.location.href = '/ChurchRegistration'}
+          style={{ width: '100%', padding: '14px 0', borderRadius: 14, background: 'transparent', border: '1.5px solid rgba(143,163,130,0.4)', color: BRAND.sage, fontSize: 15, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+        >
+          Create Church Account
+        </button>
+
+        <p
+          className="text-center mt-8"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.25)', fontSize: 13 }}
+        >
+          Built for Flourishing
+        </p>
       </div>
     </div>
   );
 }
-
 // ── Bottom Navigation ──────────────────────────────────────────────────────
-function BottomNav({ active, setActive, color }: { active: string; setActive: (t: string) => void; color: string }) {
+function BottomNav({
+  active,
+  setActive,
+  color,
+  communityBadge,
+  moreBadge,
+}: {
+  active: string;
+  setActive: (t: string) => void;
+  color: string;
+  communityBadge?: boolean;
+  moreBadge?: boolean;
+}) {
   const tabs = [
     { id: 'home', label: 'Home', icon: '🏠' },
     { id: 'sunday', label: 'Sunday', icon: '📖' },
-    { id: 'community', label: 'Community', icon: '🙏' },
+    { id: 'community', label: 'Community', icon: '🙏', badge: communityBadge },
     { id: 'groups', label: 'Groups', icon: '👥' },
-    { id: 'more', label: 'More', icon: '☰' },
+    { id: 'more', label: 'More', icon: '☰', badge: moreBadge },
   ];
+
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex max-w-md mx-auto z-20">
+    <div
+      className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-20 flex"
+      style={{
+        background: 'rgba(255,255,255,0.97)',
+        backdropFilter: 'blur(20px)',
+        borderTop: `1px solid ${color}18`,
+        boxShadow: `0 -4px 24px ${color}0d`,
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
       {tabs.map(t => (
-        <button key={t.id} onClick={() => setActive(t.id)} className="flex-1 py-2 flex flex-col items-center gap-0.5">
-          <span className="text-lg">{t.icon}</span>
-          <span className="text-xs font-medium" style={{ color: active === t.id ? color : '#9CA3AF' }}>{t.label}</span>
-          {active === t.id && <div className="w-1 h-1 rounded-full" style={{ backgroundColor: color }} />}
+        <button
+          key={t.id}
+          onClick={() => setActive(t.id)}
+          className="flex-1 py-2 flex flex-col items-center gap-0.5 relative"
+          style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+        >
+          {t.badge && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 6,
+                right: '28%',
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                boxShadow: '0 2px 6px rgba(239,68,68,0.5)',
+                zIndex: 2,
+              }}
+            />
+          )}
+          <span
+            style={{
+              fontSize: 20,
+              filter: active === t.id ? 'none' : 'grayscale(30%)',
+              transition: 'transform 0.2s',
+              transform: active === t.id ? 'scale(1.15)' : 'scale(1)',
+            }}
+          >
+            {t.icon}
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: active === t.id ? 700 : 500,
+              color: active === t.id ? color : '#9CA3AF',
+              fontFamily: "'DM Sans', sans-serif",
+              transition: 'color 0.2s',
+            }}
+          >
+            {t.label}
+          </span>
+          {active === t.id && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                width: 32,
+                height: 2.5,
+                borderRadius: '0 0 4px 4px',
+                background: `linear-gradient(90deg, ${color}, ${color}bb)`,
+              }}
+            />
+          )}
         </button>
       ))}
     </div>
@@ -369,10 +1121,15 @@ function BottomNav({ active, setActive, color }: { active: string; setActive: (t
 }
 
 // ── Home Screen ────────────────────────────────────────────────────────────
-function HomeScreen({ user, setActiveTab, setMoreSub }: { user: User; setActiveTab: (t: string) => void; setMoreSub: (s: string) => void }) {
+function HomeScreen({ user, setActiveTab, setMoreSub }: {
+  user: User;
+  setActiveTab: (t: string) => void;
+  setMoreSub: (s: string) => void;
+}) {
   const [events, setEvents] = useState<any[]>([]);
   const [devotional, setDevotional] = useState<any>(null);
   const [pinned, setPinned] = useState<any[]>([]);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -382,14 +1139,15 @@ function HomeScreen({ user, setActiveTab, setMoreSub }: { user: User; setActiveT
         .order('event_date', { ascending: true }).limit(3);
       if (ev) setEvents(ev);
 
-      const day = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+      const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
       const { data: dv } = await supabase.from('devotionals').select('*')
         .eq('church_id', user.church.id).eq('day_of_week', day)
         .order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (dv) setDevotional(dv);
 
       const { data: an } = await supabase.from('announcements').select('*')
-.eq('church_id', user.church.id).eq('approved', true).order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(5);
+        .eq('church_id', user.church.id).eq('approved', true)
+        .order('pinned', { ascending: false }).order('created_at', { ascending: false }).limit(5);
       if (an) setPinned(an);
     })();
   }, [user.church.id]);
@@ -398,73 +1156,139 @@ function HomeScreen({ user, setActiveTab, setMoreSub }: { user: User; setActiveT
     { icon: '📖', title: "Today's Devotional", sub: devotional?.title || 'No devotional today', tab: 'community' },
     { icon: '🙏', title: 'Prayer Wall', sub: 'Share and receive prayer', tab: 'community' },
     { icon: '⚡', title: 'Challenges', sub: 'View active challenges', tab: 'community' },
-    { icon: '💳', title: 'Give', sub: 'Support your church', tab: 'more' },
+    { icon: '💳', title: 'Give', sub: 'Support your church', tab: 'more', sub2: 'giving' },
   ];
 
+  const greeting = () => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
+
   return (
-    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
-      <div className="rounded-2xl p-5 text-white shadow-lg"
-        style={{ background: `linear-gradient(135deg, ${user.church.primaryColor}, ${BRAND.plum})` }}>
-        <div className="flex items-center justify-between mb-3">
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
+
+      {/* Hero welcome card */}
+      <div
+        className="mx-4 mt-4 rounded-3xl p-5 text-white relative overflow-hidden"
+        style={{
+          background: `linear-gradient(135deg, ${color} 0%, ${color}cc 60%, #4c1d95 100%)`,
+          boxShadow: `0 8px 32px ${color}40`,
+        }}
+      >
+        {/* Decorative circle */}
+        <div style={{ position: 'absolute', top: -30, right: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,0.08)' }} />
+        <div style={{ position: 'absolute', bottom: -20, right: 40, width: 80, height: 80, borderRadius: '50%', background: 'rgba(255,255,255,0.05)' }} />
+
+        <div className="flex items-start justify-between relative z-10">
           <div>
-            <p className="text-sm opacity-80">Welcome back,</p>
-            <h2 className="text-2xl font-bold">{user.name || user.email}</h2>
-            <p className="text-xs opacity-70 mt-1">{user.church.name}</p>
+            <p style={{ fontSize: 13, opacity: 0.8, fontFamily: "'DM Sans', sans-serif" }}>{greeting()},</p>
+            <h2 style={{ fontSize: 26, fontWeight: 700, fontFamily: "'Cormorant Garamond', serif", lineHeight: 1.2, marginTop: 2 }}>
+              {user.name || user.email}
+            </h2>
+            <p style={{ fontSize: 12, opacity: 0.7, marginTop: 4, fontFamily: "'DM Sans', sans-serif" }}>{user.church.name}</p>
           </div>
-          <Avatar url={user.avatarUrl} name={user.name || user.email} size={50} color={BRAND.silver} />
+          <Avatar url={user.avatarUrl} name={user.name || user.email} size={46} color="rgba(255,255,255,0.6)" />
         </div>
-        <div className="flex gap-6 mt-2 pt-3 border-t border-white/20">
-          <div><p className="text-xs opacity-70">Points</p><p className="text-xl font-bold">{user.points.toLocaleString()}</p></div>
-          <div><p className="text-xs opacity-70">Streak</p><p className="text-xl font-bold">{user.streak} days 🔥</p></div>
-          <div><p className="text-xs opacity-70">Role</p><p className="text-sm font-semibold capitalize">{user.role.replace('_', ' ')}</p></div>
+
+        <div className="flex gap-4 mt-4 pt-4 relative z-10" style={{ borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+          <div>
+            <p style={{ fontSize: 11, opacity: 0.7, fontFamily: "'DM Sans', sans-serif" }}>Points</p>
+            <p style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Cormorant Garamond', serif" }}>{user.points.toLocaleString()}</p>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.2)' }} />
+          <div>
+            <p style={{ fontSize: 11, opacity: 0.7, fontFamily: "'DM Sans', sans-serif" }}>Streak</p>
+            <p style={{ fontSize: 22, fontWeight: 700, fontFamily: "'Cormorant Garamond', serif" }}>{user.streak}d 🔥</p>
+          </div>
+          <div style={{ width: 1, background: 'rgba(255,255,255,0.2)' }} />
+          <div>
+            <p style={{ fontSize: 11, opacity: 0.7, fontFamily: "'DM Sans', sans-serif" }}>Role</p>
+            <p style={{ fontSize: 13, fontWeight: 600, textTransform: 'capitalize', fontFamily: "'DM Sans', sans-serif", marginTop: 2 }}>
+              {user.role.replace('_', ' ')}
+            </p>
+          </div>
         </div>
       </div>
 
-     {pinned.map((a, i) => (
-        <button key={i} onClick={() => { setMoreSub('ann'); setActiveTab('more'); }}
-          className="w-full rounded-xl p-3 border-l-4 bg-white text-left"
-          style={{ borderColor: user.church.primaryColor }}>
-          <p className="font-semibold text-gray-800 text-sm">📣 {a.title}</p>
-          {a.body && <p className="text-gray-500 text-xs mt-1">{a.body}</p>}
-          <p className="text-xs mt-1 font-semibold" style={{ color: user.church.primaryColor }}>Tap to view all announcements →</p>
+      {/* Pinned announcements */}
+      {pinned.map((a, i) => (
+        <button
+          key={i}
+          onClick={() => { setMoreSub('ann'); setActiveTab('more'); }}
+          className="mx-4 mt-3 w-full text-left rounded-2xl p-3.5 flex items-center gap-3"
+          style={{ background: BRAND.white, border: `1px solid ${color}20`, boxShadow: `0 2px 10px ${color}0a` }}
+        >
+          <div
+            className="flex items-center justify-center rounded-xl flex-shrink-0"
+            style={{ width: 36, height: 36, background: `${color}12` }}
+          >
+            <span style={{ fontSize: 16 }}>📣</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-semibold text-gray-800 truncate" style={{ fontSize: 13, fontFamily: "'DM Sans', sans-serif" }}>{a.title}</p>
+            {a.body && <p className="text-gray-400 text-xs truncate mt-0.5">{a.body}</p>}
+          </div>
+          <span style={{ color: `${color}80`, fontSize: 18 }}>›</span>
         </button>
       ))}
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm">
-        <h3 className="font-bold text-gray-800 mb-3">Quick Access</h3>
-        <div className="space-y-2">
+      {/* Quick access */}
+      <div className="mx-4 mt-4 rounded-3xl p-4" style={{ background: BRAND.white, boxShadow: `0 2px 16px ${color}08` }}>
+        <SectionLabel color={color}>Quick Access</SectionLabel>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {links.map((l, i) => (
-            <button key={i} onClick={() => setActiveTab(l.tab)}
-              className="w-full flex items-center gap-3 p-3 rounded-xl bg-gray-50 text-left">
-              <span className="text-xl">{l.icon}</span>
-              <div className="flex-1">
-                <p className="font-semibold text-gray-800 text-sm">{l.title}</p>
-                <p className="text-gray-500 text-xs">{l.sub}</p>
+            <button
+              key={i}
+              onClick={() => {
+                if (l.sub2) setMoreSub(l.sub2);
+                setActiveTab(l.tab);
+              }}
+              className="flex items-center gap-3 p-3 rounded-2xl text-left"
+              style={{ background: `${color}07`, border: `1px solid ${color}12`, transition: 'background 0.2s' }}
+            >
+              <div
+                className="flex items-center justify-center rounded-xl flex-shrink-0"
+                style={{ width: 38, height: 38, background: `${color}14` }}
+              >
+                <span style={{ fontSize: 18 }}>{l.icon}</span>
               </div>
-              <span className="text-gray-400">›</span>
+              <div className="flex-1">
+                <p className="font-semibold text-gray-800" style={{ fontSize: 13, fontFamily: "'DM Sans', sans-serif" }}>{l.title}</p>
+                <p className="text-gray-400 text-xs mt-0.5">{l.sub}</p>
+              </div>
+              <span style={{ color: `${color}60`, fontSize: 18 }}>›</span>
             </button>
           ))}
         </div>
       </div>
 
+      {/* Upcoming events */}
       {events.length > 0 && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <h3 className="font-bold text-gray-800 mb-3">Upcoming Events</h3>
-          <div className="space-y-3">
+        <div className="mx-4 mt-4 rounded-3xl p-4" style={{ background: BRAND.white, boxShadow: `0 2px 16px ${color}08` }}>
+          <SectionLabel color={color}>Upcoming Events</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {events.map((ev, i) => {
               const d = new Date(ev.event_date);
               return (
-                    <button key={i} onClick={() => { setMoreSub('events'); setActiveTab('more'); }} className="w-full flex items-center gap-3 text-left">
-                    <div className="w-12 h-12 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
-                    style={{ backgroundColor: user.church.primaryColor }}>
-                    <span className="text-lg font-bold leading-none">{d.getDate()}</span>
-                    <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
+                <button
+                  key={i}
+                  onClick={() => { setMoreSub('events'); setActiveTab('more'); }}
+                  className="flex items-center gap-3 text-left"
+                >
+                  <div
+                    className="flex flex-col items-center justify-center rounded-2xl flex-shrink-0"
+                    style={{ width: 48, height: 52, background: `linear-gradient(135deg, ${color}, ${color}cc)`, boxShadow: `0 4px 12px ${color}30` }}
+                  >
+                    <span style={{ fontSize: 18, fontWeight: 800, color: BRAND.white, fontFamily: "'Cormorant Garamond', serif", lineHeight: 1 }}>{d.getDate()}</span>
+                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontFamily: "'DM Sans', sans-serif" }}>{d.toLocaleString('default', { month: 'short' })}</span>
                   </div>
                   <div className="flex-1">
-                    <p className="font-semibold text-gray-800 text-sm">{ev.title}</p>
-                    <p className="text-gray-500 text-xs">{ev.location || d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                    <p className="font-semibold text-gray-800" style={{ fontSize: 13, fontFamily: "'DM Sans', sans-serif" }}>{ev.title}</p>
+                    <p className="text-gray-400 text-xs mt-0.5">{ev.location || d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                   </div>
-                  <span className="text-gray-400 text-sm">›</span>
+                  <span style={{ color: `${color}60`, fontSize: 18 }}>›</span>
                 </button>
               );
             })}
@@ -475,6 +1299,7 @@ function HomeScreen({ user, setActiveTab, setMoreSub }: { user: User; setActiveT
   );
 }
 
+// ── Sunday Screen ──────────────────────────────────────────────────────────
 function SundayScreen({ user }: { user: User }) {
   const [tab, setTab] = useState('notes');
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -482,7 +1307,9 @@ function SundayScreen({ user }: { user: User }) {
   const [submitted, setSubmitted] = useState(false);
   const [shared, setShared] = useState<any[]>([]);
   const [sermon, setSermon] = useState<any>(null);
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const [toast, setToast] = useState('');
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -499,12 +1326,16 @@ function SundayScreen({ user }: { user: User }) {
 
   async function submitNotes() {
     await supabase.from('sermon_notes').insert({
-      church_id: user.church.id, member_id: user.id,
-      answers, shared: false, points_awarded: 50,
+      church_id: user.church.id,
+      member_id: user.id,
+      answers,
+      shared: false,
+      points_awarded: 50,
       private_notes: privateNotes,
     });
     await supabase.from('profiles').update({ points: user.points + 50 }).eq('id', user.id);
     setSubmitted(true);
+    setToast('Notes submitted! +50 points earned');
   }
 
   function printNotes() {
@@ -572,181 +1403,249 @@ function SundayScreen({ user }: { user: User }) {
     if (win) { win.document.write(printContent); win.document.close(); win.print(); }
   }
 
-  const tabs = ['notes', 'community', ...(isAdmin ? ['ai assistant'] : [])];
+  const tabs = ['notes', 'community', ...(isAdminUser ? ['ai assistant'] : [])];
 
   return (
-    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
-      <div className="flex gap-2">
-        {tabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-1 py-2 rounded-xl text-sm font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
-            {t}
-          </button>
-        ))}
-      </div>
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
+      {toast && <Toast message={toast} color={color} onClose={() => setToast('')} />}
+      <ScreenHeader title="Sunday" subtitle="Engage with the Word" color={color} />
 
-      {tab === 'notes' && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-2xl p-4 shadow-sm">
-            {sermon?.series && (
-              <span className="text-xs font-semibold px-2 py-1 rounded-full text-white"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                {sermon.series}
-              </span>
-            )}
-            <h2 className="text-xl font-bold text-gray-800 mt-2">{sermon?.title || 'Sermon Notes'}</h2>
-            <p className="text-gray-500 text-sm">{sermon?.scripture || ''}</p>
-          </div>
+      <div className="px-4">
+        {/* Tab pills */}
+        <div className="flex gap-2 mb-4">
+          {tabs.map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex-1 py-2.5 rounded-2xl text-sm font-semibold capitalize"
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+                color: tab === t ? BRAND.white : color,
+                border: `1px solid ${color}${tab === t ? '00' : '20'}`,
+                boxShadow: tab === t ? `0 4px 14px ${color}30` : 'none',
+                transition: 'all 0.2s',
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
 
-          {submitted ? (
-            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-              <p className="text-3xl mb-2">🎉</p>
-              <p className="font-bold text-gray-800">Notes submitted! +50 points earned</p>
-              <button onClick={printNotes}
-                className="mt-4 w-full py-3 rounded-xl text-white font-bold"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                🖨️ Print or Save My Notes
-              </button>
+        {tab === 'notes' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Sermon header card */}
+            <div
+              className="rounded-3xl p-5"
+              style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+            >
+              {sermon?.series && (
+                <span
+                  className="text-xs font-semibold px-3 py-1 rounded-full text-white inline-block mb-2"
+                  style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, fontFamily: "'DM Sans', sans-serif" }}
+                >
+                  {sermon.series}
+                </span>
+              )}
+              <h2
+                className="text-gray-900 font-bold"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 26, lineHeight: 1.2 }}
+              >
+                {sermon?.title || 'Sermon Notes'}
+              </h2>
+              {sermon?.scripture && (
+                <p className="text-gray-500 text-sm mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{sermon.scripture}</p>
+              )}
             </div>
-          ) : (
-            <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
 
-             {sermon?.key_scriptures?.length > 0 ? (
-                <div className="rounded-xl p-4 border-l-4"
-                  style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                  <p className="text-sm font-bold mb-3" style={{ color: user.church.primaryColor }}>{sermon.key_scriptures[0].reference}</p>
-                  {sermon.key_scriptures[0].versions ? (
-                    <div className="space-y-3">
-                      {sermon.key_scriptures[0].versions.map((v: any, j: number) => (
-                        <div key={j} className="pt-2 border-t border-purple-100 first:border-0 first:pt-0">
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white mb-1 inline-block"
-                            style={{ backgroundColor: user.church.primaryColor, opacity: 0.7 }}>
-                            {v.translation}
-                          </span>
-                          <p className="text-gray-700 text-sm italic leading-relaxed mt-1">"{v.text}"</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-gray-800 text-sm italic">"{sermon.key_scriptures[0].text}"</p>
+            {submitted ? (
+              <div
+                className="rounded-3xl p-6 text-center"
+                style={{ background: BRAND.white, border: `1px solid ${color}15` }}
+              >
+                <div style={{ fontSize: 56, marginBottom: 12 }}>🎉</div>
+                <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 700, color: '#111', marginBottom: 6 }}>
+                  Notes Submitted!
+                </h3>
+                <p className="text-gray-500 text-sm mb-4">+50 points earned</p>
+                <LuxBtn color={color} onClick={printNotes} style={{ width: '100%' }}>
+                  🖨️ Print or Save My Notes
+                </LuxBtn>
+              </div>
+            ) : (
+              <div
+                className="rounded-3xl p-5"
+                style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+              >
+                {/* Key scripture */}
+                {sermon?.key_scriptures?.length > 0 ? (
+                  <div
+                    className="rounded-2xl p-4 mb-4 border-l-4"
+                    style={{ backgroundColor: `${color}0c`, borderColor: color }}
+                  >
+                    <p className="text-xs font-semibold mb-2" style={{ color, fontFamily: "'DM Sans', sans-serif", letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                      {sermon.key_scriptures[0].reference}
+                    </p>
+                    {sermon.key_scriptures[0].versions ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {sermon.key_scriptures[0].versions.map((v: any, j: number) => (
+                          <div key={j} style={{ paddingTop: j > 0 ? 10 : 0, borderTop: j > 0 ? `1px solid ${color}18` : 'none' }}>
+                            <span
+                              className="text-xs font-bold px-2 py-0.5 rounded-full text-white inline-block mb-1"
+                              style={{ background: color, fontFamily: "'DM Sans', sans-serif", opacity: 0.85 }}
+                            >
+                              {v.translation}
+                            </span>
+                            <p className="text-gray-700 text-sm italic leading-relaxed mt-1">"{v.text}"</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-gray-700 text-sm italic">"{sermon.key_scriptures[0].text}"</p>
+                    )}
+                  </div>
+                ) : sermon?.scripture ? (
+                  <div
+                    className="rounded-2xl p-4 mb-4 border-l-4"
+                    style={{ backgroundColor: `${color}0c`, borderColor: color }}
+                  >
+                    <p className="text-xs font-semibold mb-1" style={{ color, fontFamily: "'DM Sans', sans-serif', textTransform: 'uppercase'" }}>KEY VERSE</p>
+                    <p className="text-gray-700 text-sm italic leading-relaxed">{sermon.scripture}</p>
+                  </div>
+                ) : null}
+
+                {/* Fill in the blanks */}
+                {sermon?.blanks?.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>Fill in the Blanks</p>
+                    {sermon.blanks.map((b: any, i: number) => (
+                      <div key={i} className="mb-3">
+                        <p className="text-sm text-gray-700 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{b.label}</p>
+                        <input
+                          type="text"
+                          placeholder="Your answer..."
+                          value={answers[`blank_${i}`] || ''}
+                          onChange={e => setAnswers({ ...answers, [`blank_${i}`]: e.target.value })}
+                          className="w-full px-4 py-2.5 rounded-xl text-sm focus:outline-none"
+                          style={{ border: `1.5px solid ${color}25`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif", transition: 'border-color 0.2s' }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Open ended */}
+                {sermon?.open_ended?.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>Questions</p>
+                    {sermon.open_ended.map((q: string, i: number) => (
+                      <div key={i} className="mb-3">
+                        <p className="text-sm text-gray-700 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{q}</p>
+                        <textarea
+                          placeholder="Your answer..."
+                          value={answers[`open_${i}`] || ''}
+                          onChange={e => setAnswers({ ...answers, [`open_${i}`]: e.target.value })}
+                          className="w-full px-4 py-2.5 rounded-xl text-sm focus:outline-none h-20 resize-none"
+                          style={{ border: `1.5px solid ${color}25`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Reflections */}
+                {sermon?.reflections?.length > 0 && (
+                  <div className="mb-5">
+                    <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>Reflections</p>
+                    {sermon.reflections.map((r: string, i: number) => (
+                      <div key={i} className="mb-3">
+                        <p className="text-sm text-gray-700 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{r}</p>
+                        <textarea
+                          placeholder="Your reflection..."
+                          value={answers[`ref_${i}`] || ''}
+                          onChange={e => setAnswers({ ...answers, [`ref_${i}`]: e.target.value })}
+                          className="w-full px-4 py-2.5 rounded-xl text-sm focus:outline-none h-20 resize-none"
+                          style={{ border: `1.5px solid ${color}25`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Private notes */}
+                <div className="mb-5">
+                  <p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>My Private Notes</p>
+                  <textarea
+                    placeholder="Personal notes just for you. These are never shared..."
+                    value={privateNotes}
+                    onChange={e => setPrivateNotes(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl text-sm focus:outline-none h-24 resize-none"
+                    style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+                  />
+                  <p className="text-xs text-gray-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Private and visible only to you</p>
+                </div>
+
+                <div className="flex gap-3">
+                  <LuxBtn color={color} variant="outline" onClick={printNotes} style={{ flex: 1 }}>
+                    🖨️ Print
+                  </LuxBtn>
+                  <LuxBtn color={color} onClick={submitNotes} style={{ flex: 2 }}>
+                    Submit (+50 pts)
+                  </LuxBtn>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {tab === 'community' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {shared.length === 0 ? (
+              <EmptyState icon="📝" message="No shared notes yet. Be the first to share your reflections." />
+            ) : (
+              shared.map((note, i) => (
+                <div
+                  key={i}
+                  className="rounded-3xl p-4"
+                  style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 10px ${color}08` }}
+                >
+                  <div className="flex items-center gap-2 mb-2">
+                    <Avatar url={note.profiles?.avatar_url} name={note.profiles?.full_name || 'Member'} size={30} color={color} />
+                    <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                      {note.profiles?.full_name || 'Anonymous'}
+                    </p>
+                  </div>
+                  {note.answers && Object.values(note.answers).map((a: any, j: number) =>
+                    a && <p key={j} className="text-gray-600 text-sm mt-1 italic">"{a}"</p>
+                  )}
+                  {isAdminUser && (
+                    <button
+                      onClick={async () => {
+                        await supabase.from('sermon_notes').update({ shared: false }).eq('id', note.id);
+                        setShared(shared.filter(n => n.id !== note.id));
+                      }}
+                      className="mt-2 text-xs text-red-400"
+                    >
+                      Remove
+                    </button>
                   )}
                 </div>
-              ) : sermon?.scripture ? (
-                <div className="rounded-xl p-4 border-l-4"
-                  style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                  <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>KEY VERSE</p>
-                  <p className="text-gray-700 text-sm italic leading-relaxed">{sermon.scripture}</p>
-                </div>
-              ) : null}
+              ))
+            )}
+          </div>
+        )}
 
-              {sermon?.blanks?.length > 0 && (
-                <div>
-<p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Fill in the Blanks</p>
-                  {sermon.blanks.map((b: any, i: number) => (
-                    <div key={i} className="mb-3">
-                      <p className="text-sm text-gray-700 mb-1">{b.label}</p>
-                      <input type="text" placeholder="Your answer..."
-                        value={answers[`blank_${i}`] || ''}
-                        onChange={e => setAnswers({ ...answers, [`blank_${i}`]: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {sermon?.open_ended?.length > 0 && (
-                <div>
-                  <p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Questions</p>
-                  {sermon.open_ended.map((q: string, i: number) => (
-                    <div key={i} className="mb-3">
-                      <p className="text-sm text-gray-700 mb-1">{q}</p>
-                      <textarea placeholder="Your answer..."
-                        value={answers[`open_${i}`] || ''}
-                        onChange={e => setAnswers({ ...answers, [`open_${i}`]: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {sermon?.reflections?.length > 0 && (
-                <div>
-<p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Reflections</p>
-                  {sermon.reflections.map((r: string, i: number) => (
-                    <div key={i} className="mb-3">
-                      <p className="text-sm text-gray-700 mb-1">{r}</p>
-                      <textarea placeholder="Your reflection..."
-                        value={answers[`ref_${i}`] || ''}
-                        onChange={e => setAnswers({ ...answers, [`ref_${i}`]: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div>
-<p className="text-sm font-bold uppercase tracking-wide mb-2" style={{ color: user.church.primaryColor }}>My Private Notes</p>
-                <textarea placeholder="Personal notes just for you. These are never shared..."
-                  value={privateNotes}
-                  onChange={e => setPrivateNotes(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-24 resize-none" />
-                <p className="text-xs text-gray-400 mt-1">Private and visible only to you</p>
-              </div>
-
-              <div className="flex gap-2">
-                <button onClick={printNotes}
-                  className="flex-1 py-3 rounded-xl font-bold border text-sm"
-                  style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
-                  🖨️ Print Notes
-                </button>
-                <button onClick={submitNotes}
-                  className="flex-1 py-3 rounded-xl text-white font-bold"
-                  style={{ backgroundColor: user.church.primaryColor }}>
-                  Submit (+50 pts)
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === 'community' && (
-        <div className="space-y-3">
-          {shared.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-              <p className="text-gray-400 text-sm">No shared notes yet.</p>
-            </div>
-          ) : (
-            shared.map((note, i) => (
-              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-                <div className="flex items-center gap-2 mb-2">
-                  <Avatar url={note.profiles?.avatar_url} name={note.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
-                  <p className="font-semibold text-gray-800 text-sm">{note.profiles?.full_name || 'Anonymous'}</p>
-                </div>
-                {note.answers && Object.values(note.answers).map((a: any, j: number) =>
-                  a && <p key={j} className="text-gray-600 text-sm mt-1">"{a}"</p>
-                )}
-                {isAdmin && (
-                  <button onClick={async () => {
-                    await supabase.from('sermon_notes').update({ shared: false }).eq('id', note.id);
-                    setShared(shared.filter(n => n.id !== note.id));
-                  }} className="mt-2 text-xs text-red-400">Remove</button>
-                )}
-              </div>
-            ))
-          )}
-        </div>
-      )}
-
-      {tab === 'ai assistant' && isAdmin && <AISermonAssistant user={user} />}
+        {tab === 'ai assistant' && isAdminUser && <AISermonAssistant user={user} />}
+      </div>
     </div>
   );
 }
 
+// ── Sermon Notes Editor ────────────────────────────────────────────────────
 function SermonNotesEditor({ user }: { user: User }) {
   const [sermon, setSermon] = useState<any>(null);
   const [saving, setSaving] = useState(false);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -770,77 +1669,71 @@ function SermonNotesEditor({ user }: { user: User }) {
   }
 
   if (!sermon) return (
-    <div className="p-3 rounded-xl bg-gray-50 text-center">
-      <p className="text-gray-400 text-xs">Generate content first to see sermon notes here.</p>
+    <div
+      className="p-4 rounded-2xl text-center"
+      style={{ background: `${color}08`, border: `1px solid ${color}15` }}
+    >
+      <p className="text-gray-400 text-xs" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+        Generate content first to see sermon notes here.
+      </p>
     </div>
   );
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '10px 14px',
+    border: `1.5px solid ${color}20`,
+    borderRadius: 12,
+    fontSize: 14,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    background: `${color}06`,
+  };
+
   return (
-    <div className="space-y-3 p-3 rounded-xl border border-gray-100">
-      <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sermon Title</label>
-        <input type="text" defaultValue={sermon.title || ''}
-          onBlur={e => setSermon({ ...sermon, title: e.target.value })}
-          className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+    <div
+      className="rounded-2xl p-4"
+      style={{ border: `1px solid ${color}20`, background: `${color}05` }}
+    >
+      <div className="mb-3">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Sermon Title</label>
+        <input type="text" defaultValue={sermon.title || ''} onBlur={e => setSermon({ ...sermon, title: e.target.value })} style={inputStyle} />
       </div>
-      <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Scripture</label>
-        <input type="text" defaultValue={sermon.scripture || ''}
-          onBlur={e => setSermon({ ...sermon, scripture: e.target.value })}
-          className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+      <div className="mb-3">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Scripture</label>
+        <input type="text" defaultValue={sermon.scripture || ''} onBlur={e => setSermon({ ...sermon, scripture: e.target.value })} style={inputStyle} />
       </div>
-      <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Fill in the Blanks</label>
+      <div className="mb-3">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Fill in the Blanks</label>
         {(sermon.blanks || []).map((b: any, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" defaultValue={b.label || ''}
-              onBlur={e => {
-                const updated = [...sermon.blanks];
-                updated[i] = { ...updated[i], label: e.target.value };
-                setSermon({ ...sermon, blanks: updated });
-              }}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <input type="text" defaultValue={b.label || ''} onBlur={e => { const updated = [...sermon.blanks]; updated[i] = { ...updated[i], label: e.target.value }; setSermon({ ...sermon, blanks: updated }); }} style={inputStyle} />
           </div>
         ))}
       </div>
-      <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Open Ended Questions</label>
+      <div className="mb-3">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Open Ended Questions</label>
         {(sermon.open_ended || []).map((q: string, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" defaultValue={q}
-              onBlur={e => {
-                const updated = [...sermon.open_ended];
-                updated[i] = e.target.value;
-                setSermon({ ...sermon, open_ended: updated });
-              }}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <input type="text" defaultValue={q} onBlur={e => { const updated = [...sermon.open_ended]; updated[i] = e.target.value; setSermon({ ...sermon, open_ended: updated }); }} style={inputStyle} />
           </div>
         ))}
       </div>
-      <div>
-        <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 block">Reflection Questions</label>
+      <div className="mb-4">
+        <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Reflection Questions</label>
         {(sermon.reflections || []).map((r: string, i: number) => (
           <div key={i} className="mb-2">
-            <input type="text" defaultValue={r}
-              onBlur={e => {
-                const updated = [...sermon.reflections];
-                updated[i] = e.target.value;
-                setSermon({ ...sermon, reflections: updated });
-              }}
-              className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <input type="text" defaultValue={r} onBlur={e => { const updated = [...sermon.reflections]; updated[i] = e.target.value; setSermon({ ...sermon, reflections: updated }); }} style={inputStyle} />
           </div>
         ))}
       </div>
-      <div className="flex gap-2">
-        <button onClick={() => save(false)} disabled={saving}
-          className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">
+      <div className="flex gap-3">
+        <LuxBtn color={color} variant="outline" onClick={() => save(false)} disabled={saving} style={{ flex: 1, fontSize: 13 }}>
           Save Draft
-        </button>
-        <button onClick={() => save(true)} disabled={saving}
-          className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-          style={{ backgroundColor: user.church.primaryColor }}>
+        </LuxBtn>
+        <LuxBtn color={color} onClick={() => save(true)} disabled={saving} style={{ flex: 1, fontSize: 13 }}>
           Publish Notes
-        </button>
+        </LuxBtn>
       </div>
     </div>
   );
@@ -858,6 +1751,7 @@ function AISermonAssistant({ user }: { user: User }) {
   const [outline, setOutline] = useState('');
   const [generating, setGenerating] = useState(false);
   const [draft, setDraft] = useState<SermonDraft | null>(null);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -878,12 +1772,10 @@ function AISermonAssistant({ user }: { user: User }) {
   async function generate() {
     if (!outline.trim()) { alert('Please enter your sermon outline'); return; }
     setGenerating(true);
-
     const selectedTranslations = [theology.translation_1, theology.translation_2, theology.translation_3].filter(Boolean);
     const translationsStr = selectedTranslations.length > 0 ? selectedTranslations.join(', ') : 'KJV';
 
     try {
-      // ── CALL 1: Weekly content ─────────────────────────────────────────
       const res1 = await fetch('https://cjnzizyxjoqmmnksfitd.supabase.co/functions/v1/sermon-assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -896,7 +1788,6 @@ function AISermonAssistant({ user }: { user: User }) {
       let p1: any;
       try { p1 = JSON.parse(match1[0]); } catch { alert('Could not parse weekly content. Please try again.'); setGenerating(false); return; }
 
-      // ── CALL 2: Sermon notes and key scriptures ────────────────────────
       const res2 = await fetch('https://cjnzizyxjoqmmnksfitd.supabase.co/functions/v1/sermon-assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -909,7 +1800,6 @@ function AISermonAssistant({ user }: { user: User }) {
       let p2: any;
       try { p2 = JSON.parse(match2[0]); } catch { alert('Could not parse sermon notes. Please try again.'); setGenerating(false); return; }
 
-      // ── Save sermon notes to weekly_sermon ─────────────────────────────
       await supabase.from('weekly_sermon').upsert({
         church_id: user.church.id,
         title: p2.sermon_notes?.title || '',
@@ -924,7 +1814,6 @@ function AISermonAssistant({ user }: { user: User }) {
         updated_at: new Date().toISOString(),
       }, { onConflict: 'church_id' });
 
-      // ── Save draft ─────────────────────────────────────────────────────
       const nd: SermonDraft = {
         sermon_outline: outline,
         generated_devotionals: p1.devotionals,
@@ -941,7 +1830,6 @@ function AISermonAssistant({ user }: { user: User }) {
         .select().single();
       setDraft({ ...nd, id: saved?.id });
       setStep('draft');
-
     } catch (e) {
       alert('Generation failed. Check your connection and try again.');
       console.error(e);
@@ -955,11 +1843,9 @@ function AISermonAssistant({ user }: { user: User }) {
     setDraft(prev => prev ? { ...prev, [field]: value } : null);
   }
 
-async function publish() {
+  async function publish() {
     if (!draft?.id) return;
-
     await supabase.from('sermon_drafts').update({ status: 'published' }).eq('id', draft.id);
-
     if (draft.generated_devotionals) {
       for (const d of draft.generated_devotionals) {
         await supabase.from('devotionals').insert({
@@ -972,16 +1858,14 @@ async function publish() {
         });
       }
     }
-
     await supabase.from('weekly_sermon').update({ published: true }).eq('church_id', user.church.id);
-
     alert('Content published!');
     setStep('input');
     setDraft(null);
     setOutline('');
   }
 
- const theologyFields = [
+  const theologyFields = [
     { label: 'Denomination', key: 'denomination', ph: 'e.g. Pentecostal, Baptist, Non-denominational', ta: false },
     { label: 'Worship Style', key: 'worship_style', ph: 'e.g. Contemporary, Traditional, Blended', ta: false },
     { label: 'Statement of Faith', key: 'statement_of_faith', ph: 'Brief summary of your core beliefs...', ta: true },
@@ -989,207 +1873,218 @@ async function publish() {
     { label: 'Topics to Never Include', key: 'restricted_topics', ph: 'Topics or positions the AI should avoid...', ta: true },
   ];
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '11px 14px',
+    border: `1.5px solid ${color}20`,
+    borderRadius: 12,
+    fontSize: 14,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    background: `${color}06`,
+  };
+
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {step === 'theology' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <h3 className="font-bold text-gray-800 text-lg">Theology Settings</h3>
-          <p className="text-gray-500 text-sm">Configure your church doctrine so all AI content aligns with your beliefs.</p>
-          {theologyFields.map((f, i) => (
-            <div key={i}>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.label}</label>
-              {f.ta ? (
-                <textarea placeholder={f.ph} value={(theology as any)[f.key]}
-                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-              ) : (
-                <input type="text" placeholder={f.ph} value={(theology as any)[f.key]}
-                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-              )}
-            </div>
-          ))}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Writing Tone</label>
-            <p className="text-xs text-gray-400 mb-2">How should the AI write content for your church?</p>
-            <select value={theology.writing_tone}
-              onChange={e => setTheology({ ...theology, writing_tone: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-              {['Expository','Conversational','Prophetic','Teaching','Evangelistic','Devotional','Encouraging'].map(t => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bible Translations (up to 3)</label>
-            <p className="text-xs text-gray-400 mb-2">Each selected translation will appear on Sunday notes.</p>
-            {[
-              { label: 'Translation 1', key: 'translation_1' },
-              { label: 'Translation 2 (optional)', key: 'translation_2' },
-              { label: 'Translation 3 (optional)', key: 'translation_3' },
-            ].map((f, i) => (
-              <div key={i} className="mb-2">
-                <label className="text-xs text-gray-400">{f.label}</label>
-                <select value={(theology as any)[f.key]}
-                  onChange={e => setTheology({ ...theology, [f.key]: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-                  <option value="">None</option>
-                  {['KJV','NKJV','NIV','ESV','NLT','AMP','NASB','CSB','MSG','NCV','HCSB','RSV','NRSV','TLB','GNT','NET','WEB','ASV','YLT','DBY'].map(t => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
+        <div
+          className="rounded-3xl p-5"
+          style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+        >
+          <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 700, color: '#111', marginBottom: 4 }}>
+            Theology Settings
+          </h3>
+          <p className="text-gray-400 text-sm mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Configure your doctrine so all AI content reflects your beliefs.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {theologyFields.map((f, i) => (
+              <div key={i}>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.label}</label>
+                {f.ta ? (
+                  <textarea placeholder={f.ph} value={(theology as any)[f.key]} onChange={e => setTheology({ ...theology, [f.key]: e.target.value })} style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} />
+                ) : (
+                  <input type="text" placeholder={f.ph} value={(theology as any)[f.key]} onChange={e => setTheology({ ...theology, [f.key]: e.target.value })} style={inputStyle} />
+                )}
               </div>
             ))}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Writing Tone</label>
+              <select value={theology.writing_tone} onChange={e => setTheology({ ...theology, writing_tone: e.target.value })} style={{ ...inputStyle, cursor: 'pointer' }}>
+                {['Expository', 'Conversational', 'Prophetic', 'Teaching', 'Evangelistic', 'Devotional', 'Encouraging'].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Bible Translations (up to 3)</label>
+              <p className="text-xs text-gray-400 mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Each selected translation will appear on Sunday notes.</p>
+              {[{ label: 'Translation 1', key: 'translation_1' }, { label: 'Translation 2 (optional)', key: 'translation_2' }, { label: 'Translation 3 (optional)', key: 'translation_3' }].map((f, i) => (
+                <div key={i} className="mb-2">
+                  <label className="text-xs text-gray-400 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.label}</label>
+                  <select value={(theology as any)[f.key]} onChange={e => setTheology({ ...theology, [f.key]: e.target.value })} style={{ ...inputStyle, cursor: 'pointer' }}>
+                    <option value="">None</option>
+                    {['KJV', 'NKJV', 'NIV', 'ESV', 'NLT', 'AMP', 'NASB', 'CSB', 'MSG', 'NCV', 'HCSB', 'RSV', 'NRSV', 'TLB', 'GNT', 'NET', 'WEB', 'ASV', 'YLT', 'DBY'].map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+            </div>
+            <LuxBtn color={color} onClick={saveTheology} style={{ width: '100%' }}>
+              Save and Continue
+            </LuxBtn>
           </div>
-          <button onClick={saveTheology}
-            className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor }}>
-            Save and Continue
-          </button>
         </div>
       )}
 
       {step === 'input' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-gray-800 text-lg">AI Sermon Assistant</h3>
-            <button onClick={() => setStep('theology')}
-              className="text-xs px-3 py-1 rounded-full border"
-              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+        <div
+          className="rounded-3xl p-5"
+          style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+        >
+          <div className="flex justify-between items-center mb-1">
+            <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 700, color: '#111' }}>
+              AI Sermon Assistant
+            </h3>
+            <button
+              onClick={() => setStep('theology')}
+              className="text-xs px-3 py-1.5 rounded-xl border font-semibold"
+              style={{ color, borderColor: `${color}40`, fontFamily: "'DM Sans', sans-serif" }}
+            >
               Edit Theology
             </button>
           </div>
+          <p className="text-gray-400 text-sm mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Paste your outline and generate a full week of content.
+          </p>
           <textarea
             placeholder="Paste your sermon title, scripture, main points, illustrations, and notes here..."
-            value={outline} onChange={e => setOutline(e.target.value)}
-            className="w-full px-3 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none resize-none h-40" />
-          <div className="rounded-xl p-3" style={{ backgroundColor: '#F5F0FF' }}>
-            <p className="text-xs font-semibold mb-2" style={{ color: user.church.primaryColor }}>Will generate:</p>
+            value={outline}
+            onChange={e => setOutline(e.target.value)}
+            className="w-full px-4 py-3 rounded-2xl text-sm focus:outline-none resize-none h-40"
+            style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+          />
+          <div
+            className="rounded-2xl p-4 mt-3 mb-4"
+            style={{ background: `${color}0a`, border: `1px solid ${color}18` }}
+          >
+            <p className="text-xs font-semibold mb-2" style={{ color, fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>Will generate:</p>
             <div className="grid grid-cols-2 gap-1">
-              {['5 Daily Devotionals','Small Group Questions','Weekly Challenge','Prayer Prompt','Announcement','3 Social Captions'].map((x, i) => (
-                <p key={i} className="text-xs text-gray-600">✓ {x}</p>
+              {['5 Daily Devotionals', 'Small Group Questions', 'Weekly Challenge', 'Prayer Prompt', 'Announcement', '3 Social Captions'].map((x, i) => (
+                <p key={i} className="text-xs text-gray-600 flex items-center gap-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                  <span style={{ color }}>✓</span> {x}
+                </p>
               ))}
             </div>
           </div>
-          <button onClick={generate} disabled={generating}
-            className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor, opacity: generating ? 0.7 : 1 }}>
-            {generating ? 'Generating...' : 'Generate Content'}
-          </button>
+          <LuxBtn color={color} onClick={generate} disabled={generating} style={{ width: '100%', fontSize: 15 }}>
+            {generating ? '✨ Generating...' : '✨ Generate Content'}
+          </LuxBtn>
         </div>
       )}
 
       {step === 'draft' && draft && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-gray-800">Generated Content</h3>
-            <span className="text-xs px-2 py-1 rounded-full bg-yellow-100 text-yellow-700">Draft</span>
+        <div
+          className="rounded-3xl p-5"
+          style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+        >
+          <div className="flex justify-between items-center mb-1">
+            <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 700, color: '#111' }}>
+              Generated Content
+            </h3>
+            <span
+              className="text-xs px-3 py-1 rounded-full font-semibold"
+              style={{ background: '#fef3c7', color: '#92400e', fontFamily: "'DM Sans', sans-serif" }}
+            >
+              Draft
+            </span>
           </div>
-          <p className="text-gray-500 text-xs">Review and edit before publishing. Nothing goes live until you click Publish.</p>
+          <p className="text-gray-400 text-sm mb-5" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Review and edit before publishing. Nothing goes live until you tap Publish.
+          </p>
 
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Daily Devotionals</p>
+          {/* Devotionals */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Daily Devotionals</SectionLabel>
             {(draft.generated_devotionals || []).map((dv: any, i: number) => (
-              <div key={i} className="mb-3 p-3 rounded-xl border border-gray-100">
-                <p className="text-xs font-bold mb-1" style={{ color: user.church.primaryColor }}>{dv.day}</p>
-                <input type="text" defaultValue={dv.title || ''}
-                  onBlur={e => {
-                    const u = [...(draft.generated_devotionals || [])];
-                    u[i] = { ...u[i], title: e.target.value };
-                    updateField('generated_devotionals', u);
-                  }}
-                  className="w-full font-semibold text-gray-800 text-sm border-0 focus:outline-none" />
-                <textarea defaultValue={dv.body || ''}
-                  onBlur={e => {
-                    const u = [...(draft.generated_devotionals || [])];
-                    u[i] = { ...u[i], body: e.target.value };
-                    updateField('generated_devotionals', u);
-                  }}
-                  className="w-full text-gray-600 text-xs border-0 focus:outline-none resize-none h-16 mt-1" />
+              <div key={i} className="mb-3 p-4 rounded-2xl" style={{ border: `1px solid ${color}18`, background: `${color}05` }}>
+                <p className="text-xs font-bold mb-1.5" style={{ color, fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>{dv.day}</p>
+                <input type="text" defaultValue={dv.title || ''} onBlur={e => { const u = [...(draft.generated_devotionals || [])]; u[i] = { ...u[i], title: e.target.value }; updateField('generated_devotionals', u); }} className="w-full font-semibold text-gray-800 text-sm border-0 focus:outline-none bg-transparent" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 17 }} />
+                <textarea defaultValue={dv.body || ''} onBlur={e => { const u = [...(draft.generated_devotionals || [])]; u[i] = { ...u[i], body: e.target.value }; updateField('generated_devotionals', u); }} className="w-full text-gray-600 text-xs border-0 focus:outline-none resize-none h-16 mt-1 bg-transparent" style={{ fontFamily: "'DM Sans', sans-serif" }} />
               </div>
             ))}
           </div>
 
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Small Group Questions</p>
+          {/* Small group questions */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Small Group Questions</SectionLabel>
             {(draft.generated_questions || []).map((q: string, i: number) => (
               <div key={i} className="flex gap-2 mb-2">
-                <span className="text-xs text-gray-400 mt-2 flex-shrink-0">{i + 1}.</span>
-                <input type="text" defaultValue={q}
-                  onBlur={e => {
-                    const u = [...(draft.generated_questions || [])];
-                    u[i] = e.target.value;
-                    updateField('generated_questions', u);
-                  }}
-                  className="flex-1 text-sm text-gray-700 border-b border-gray-200 focus:outline-none pb-1" />
+                <span className="text-xs text-gray-400 mt-2 flex-shrink-0" style={{ fontFamily: "'DM Sans', sans-serif" }}>{i + 1}.</span>
+                <input type="text" defaultValue={q} onBlur={e => { const u = [...(draft.generated_questions || [])]; u[i] = e.target.value; updateField('generated_questions', u); }} className="flex-1 text-sm text-gray-700 border-b focus:outline-none pb-1 bg-transparent" style={{ borderColor: `${color}25`, fontFamily: "'DM Sans', sans-serif" }} />
               </div>
             ))}
-            <button onClick={() => updateField('generated_questions', [...(draft.generated_questions || []), 'New question'])}
-              className="text-xs mt-1" style={{ color: user.church.primaryColor }}>+ Add question</button>
+            <button onClick={() => updateField('generated_questions', [...(draft.generated_questions || []), 'New question'])} className="text-xs mt-1 font-semibold" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>+ Add question</button>
           </div>
 
+          {/* Social captions */}
           {draft.generated_social && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Social Captions</p>
+            <div className="mb-5">
+              <SectionLabel color={color}>Social Captions</SectionLabel>
               {Object.entries(draft.generated_social).map(([key, val]) => (
-                <div key={key} className="mb-2">
-                  <p className="text-xs text-gray-400 capitalize mb-1">{key}:</p>
-                  <textarea defaultValue={val as string}
-                    onBlur={e => updateField('generated_social', { ...draft.generated_social, [key]: e.target.value })}
-                    className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+                <div key={key} className="mb-3">
+                  <p className="text-xs text-gray-400 capitalize mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{key}:</p>
+                  <textarea defaultValue={val as string} onBlur={e => updateField('generated_social', { ...draft.generated_social, [key]: e.target.value })} className="w-full text-sm text-gray-700 border rounded-xl p-2.5 focus:outline-none resize-none h-16" style={{ borderColor: `${color}20`, background: `${color}05`, fontFamily: "'DM Sans', sans-serif" }} />
                 </div>
               ))}
             </div>
           )}
 
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Prayer Prompt</p>
-           <textarea defaultValue={draft.generated_prayer || ''}
-              onBlur={e => updateField('generated_prayer', e.target.value)}
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+          {/* Prayer prompt */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Prayer Prompt</SectionLabel>
+            <textarea defaultValue={draft.generated_prayer || ''} onBlur={e => updateField('generated_prayer', e.target.value)} className="w-full text-sm text-gray-700 border rounded-xl p-2.5 focus:outline-none resize-none h-16" style={{ borderColor: `${color}20`, background: `${color}05`, fontFamily: "'DM Sans', sans-serif" }} />
           </div>
 
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Announcement</p>
-          <textarea defaultValue={draft.generated_announcement || ''}
-              onBlur={e => updateField('generated_announcement', e.target.value)}
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-16" />
+          {/* Announcement */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Announcement</SectionLabel>
+            <textarea defaultValue={draft.generated_announcement || ''} onBlur={e => updateField('generated_announcement', e.target.value)} className="w-full text-sm text-gray-700 border rounded-xl p-2.5 focus:outline-none resize-none h-16" style={{ borderColor: `${color}20`, background: `${color}05`, fontFamily: "'DM Sans', sans-serif" }} />
           </div>
 
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Personal Notes</p>
-            <textarea defaultValue={draft.admin_notes || ''}
-              onBlur={e => updateField('admin_notes', e.target.value)}
-              placeholder="Add notes, reminders, or additional context..."
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl p-2 focus:outline-none resize-none h-20" />
+          {/* Personal notes */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Personal Notes</SectionLabel>
+            <textarea defaultValue={draft.admin_notes || ''} onBlur={e => updateField('admin_notes', e.target.value)} placeholder="Add notes, reminders, or additional context..." className="w-full text-sm text-gray-700 border rounded-xl p-2.5 focus:outline-none resize-none h-20" style={{ borderColor: `${color}20`, background: `${color}05`, fontFamily: "'DM Sans', sans-serif" }} />
           </div>
-          <div>
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Sunday Sermon Notes</p>
+
+          {/* Sermon notes editor */}
+          <div className="mb-5">
+            <SectionLabel color={color}>Sunday Sermon Notes</SectionLabel>
             <SermonNotesEditor user={user} />
           </div>
 
-          <div className="flex gap-2">
-            <button onClick={() => { setStep('input'); setDraft(null); }}
-              className="flex-1 py-3 rounded-xl font-bold border"
-              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+          <div className="flex gap-3">
+            <LuxBtn color={color} variant="outline" onClick={() => { setStep('input'); setDraft(null); }} style={{ flex: 1 }}>
               Discard
-            </button>
-            <button onClick={publish}
-              className="flex-1 py-3 rounded-xl font-bold text-white"
-              style={{ backgroundColor: user.church.primaryColor }}>
+            </LuxBtn>
+            <LuxBtn color={color} onClick={publish} style={{ flex: 2 }}>
               Publish All
-            </button>
+            </LuxBtn>
           </div>
         </div>
       )}
     </div>
   );
 }
+// ── Devotional Accordion ───────────────────────────────────────────────────
 function DevotionalAccordion({ user, devotionals }: { user: User; devotionals: any[] }) {
   const [openDay, setOpenDay] = useState<string | null>(null);
   const [read, setRead] = useState<Record<string, boolean>>({});
+  const color = user.church.primaryColor;
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
-  const today = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+  const today = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date().getDay()];
 
   const byDay = days.reduce((acc: Record<string, any>, day) => {
     const dv = devotionals.find(d => d.day_of_week === day);
@@ -1198,67 +2093,104 @@ function DevotionalAccordion({ user, devotionals }: { user: User; devotionals: a
   }, {});
 
   if (devotionals.length === 0) return (
-    <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-      <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
-    </div>
+    <EmptyState icon="📖" message="No devotionals posted yet. Check back soon." />
   );
 
   return (
-    <div className="space-y-2">
-      <p className="text-xs text-gray-400 text-center mb-2">Tap a day to read</p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <p className="text-xs text-gray-400 text-center mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Tap a day to read</p>
       {days.filter(day => byDay[day]).map((day, i) => {
         const dv = byDay[day];
         const isOpen = openDay === day;
         const isToday = day === today;
         const isRead = read[day];
+
         return (
-          <div key={i} className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <button onClick={() => setOpenDay(isOpen ? null : day)}
-              className="w-full flex items-center justify-between p-4">
+          <div
+            key={i}
+            className="rounded-3xl overflow-hidden"
+            style={{
+              background: BRAND.white,
+              border: `1px solid ${isToday ? color + '40' : color + '12'}`,
+              boxShadow: isToday ? `0 4px 20px ${color}15` : `0 2px 8px ${color}06`,
+            }}
+          >
+            <button
+              onClick={() => setOpenDay(isOpen ? null : day)}
+              className="w-full flex items-center justify-between p-4"
+              style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+            >
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                  style={{ backgroundColor: isRead ? '#4ade80' : isToday ? user.church.primaryColor : '#E5E7EB', color: isRead || isToday ? BRAND.white : '#6B7280' }}>
+                <div
+                  className="flex items-center justify-center rounded-2xl flex-shrink-0 font-bold"
+                  style={{
+                    width: 44,
+                    height: 44,
+                    background: isRead
+                      ? 'linear-gradient(135deg, #4ade80, #22c55e)'
+                      : isToday
+                        ? `linear-gradient(135deg, ${color}, ${color}cc)`
+                        : `${color}12`,
+                    color: isRead || isToday ? BRAND.white : color,
+                    fontSize: isRead ? 18 : 13,
+                    fontFamily: "'DM Sans', sans-serif",
+                    boxShadow: isRead ? '0 4px 12px rgba(74,222,128,0.3)' : isToday ? `0 4px 12px ${color}30` : 'none',
+                    transition: 'all 0.3s',
+                  }}
+                >
                   {isRead ? '✓' : day.slice(0, 2)}
                 </div>
                 <div className="text-left">
-                  <p className="font-bold text-gray-800 text-sm">{day}</p>
-                  <p className="text-xs text-gray-500">{dv.title}</p>
+                  <p className="font-bold text-gray-800 text-sm" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 17 }}>{day}</p>
+                  <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{dv.title}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {isToday && !isRead && (
-                  <span className="text-xs px-2 py-0.5 rounded-full text-white font-semibold"
-                    style={{ backgroundColor: user.church.primaryColor }}>Today</span>
+                  <span
+                    className="text-xs font-semibold px-2.5 py-1 rounded-full text-white"
+                    style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, fontFamily: "'DM Sans', sans-serif", fontSize: 10 }}
+                  >
+                    Today
+                  </span>
                 )}
-                <span className="text-gray-400 text-lg">{isOpen ? '∧' : '∨'}</span>
+                <span style={{ color: `${color}60`, fontSize: 20, fontWeight: 300 }}>{isOpen ? '∧' : '∨'}</span>
               </div>
             </button>
+
             {isOpen && (
-              <div className="px-4 pb-4 border-t border-gray-50">
-                <div className="mt-3 mb-3 p-3 rounded-xl border-l-4"
-                  style={{ backgroundColor: '#F5F0FF', borderColor: user.church.primaryColor }}>
-                  <p className="text-xs font-semibold mb-1" style={{ color: user.church.primaryColor }}>SCRIPTURE</p>
-                  <p className="text-gray-700 text-sm italic">{dv.scripture}</p>
+              <div className="px-4 pb-5" style={{ borderTop: `1px solid ${color}10` }}>
+                <div
+                  className="mt-4 mb-4 p-4 rounded-2xl border-l-4"
+                  style={{ backgroundColor: `${color}0c`, borderColor: color }}
+                >
+                  <p className="text-xs font-semibold mb-1" style={{ color, fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scripture</p>
+                  <p className="text-gray-700 text-sm italic leading-relaxed" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16 }}>{dv.scripture}</p>
                 </div>
-                <p className="text-gray-700 text-sm leading-relaxed mb-4">{dv.body}</p>
+                <p className="text-gray-700 text-sm leading-relaxed mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>{dv.body}</p>
                 {dv.reflection && (
-                  <div className="p-3 rounded-xl bg-gray-50 mb-4">
-                    <p className="text-xs font-semibold text-gray-500 mb-1">REFLECT</p>
-                    <p className="text-gray-600 text-sm italic">{dv.reflection}</p>
+                  <div
+                    className="p-4 rounded-2xl mb-4"
+                    style={{ background: `${color}08`, border: `1px solid ${color}15` }}
+                  >
+                    <p className="text-xs font-semibold text-gray-500 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>Reflect</p>
+                    <p className="text-gray-600 text-sm italic" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16 }}>{dv.reflection}</p>
                   </div>
                 )}
-                {!isRead && (
-                  <button onClick={async () => {
-                    await supabase.from('profiles').update({ points: user.points + 20 }).eq('id', user.id);
-                    setRead({ ...read, [day]: true });
-                    setOpenDay(null);
-                  }} className="w-full py-3 rounded-xl text-white text-sm font-semibold"
-                    style={{ backgroundColor: user.church.primaryColor }}>
+                {!isRead ? (
+                  <LuxBtn
+                    color={color}
+                    onClick={async () => {
+                      await supabase.from('profiles').update({ points: user.points + 20 }).eq('id', user.id);
+                      setRead({ ...read, [day]: true });
+                      setOpenDay(null);
+                    }}
+                    style={{ width: '100%' }}
+                  >
                     Mark as Read (+20 pts)
-                  </button>
-                )}
-                {isRead && (
-                  <p className="text-center text-green-600 text-sm font-semibold">✓ Completed</p>
+                  </LuxBtn>
+                ) : (
+                  <p className="text-center text-green-500 text-sm font-semibold" style={{ fontFamily: "'DM Sans', sans-serif" }}>✓ Completed</p>
                 )}
               </div>
             )}
@@ -1268,6 +2200,8 @@ function DevotionalAccordion({ user, devotionals }: { user: User; devotionals: a
     </div>
   );
 }
+
+// ── Challenge Card ─────────────────────────────────────────────────────────
 function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
   const [expanded, setExpanded] = useState(false);
   const [joined, setJoined] = useState(false);
@@ -1275,8 +2209,9 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
   const [loading, setLoading] = useState(false);
   const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const color = user.church.primaryColor;
 
- useEffect(() => {
+  useEffect(() => {
     (async () => {
       const { data } = await supabase.from('challenge_participants')
         .select('*').eq('challenge_id', c.id).eq('member_id', user.id).maybeSingle();
@@ -1291,9 +2226,7 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
 
   async function join() {
     setLoading(true);
-    await supabase.from('challenge_participants').insert({
-      challenge_id: c.id, member_id: user.id, progress: 0,
-    });
+    await supabase.from('challenge_participants').insert({ challenge_id: c.id, member_id: user.id, progress: 0 });
     setJoined(true);
     setLoading(false);
   }
@@ -1317,60 +2250,87 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
   const pct = Math.round((progress / totalDays) * 100);
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-      <button onClick={() => setExpanded(!expanded)} className="w-full p-4 text-left">
+    <div
+      className="rounded-3xl overflow-hidden"
+      style={{
+        background: BRAND.white,
+        border: `1px solid ${color}15`,
+        boxShadow: `0 2px 12px ${color}08`,
+      }}
+    >
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full p-4 text-left"
+        style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+      >
         <div className="flex justify-between items-start mb-1">
-          <h3 className="font-bold text-gray-800 text-sm flex-1 pr-2">{c.title}</h3>
+          <h3 className="font-bold text-gray-800 flex-1 pr-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 19 }}>{c.title}</h3>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs px-2 py-0.5 rounded-full text-white"
-              style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
-            <span className="text-gray-400">{expanded ? '∧' : '∨'}</span>
+            <span
+              className="text-xs font-semibold px-2.5 py-1 rounded-full text-white"
+              style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, fontFamily: "'DM Sans', sans-serif" }}
+            >
+              {c.type}
+            </span>
+            <span style={{ color: `${color}60`, fontSize: 18 }}>{expanded ? '∧' : '∨'}</span>
           </div>
         </div>
-        <p className="text-xs text-gray-500">{c.points} points · {totalDays} days</p>
+        <p className="text-xs text-gray-400 mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>{c.points} points · {totalDays} days</p>
         {joined && (
-          <div className="mt-2">
-            <div className="flex justify-between text-xs text-gray-400 mb-1">
+          <div>
+            <div className="flex justify-between text-xs text-gray-400 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>
               <span>Progress</span>
               <span>{progress}/{totalDays} days</span>
             </div>
-            <div className="w-full h-2 rounded-full bg-gray-100">
-              <div className="h-2 rounded-full transition-all"
-                style={{ width: `${pct}%`, backgroundColor: user.church.primaryColor }} />
+            <div className="w-full h-2 rounded-full" style={{ background: `${color}15` }}>
+              <div
+                className="h-2 rounded-full transition-all"
+                style={{ width: `${pct}%`, background: `linear-gradient(90deg, ${color}, ${color}cc)` }}
+              />
             </div>
           </div>
         )}
       </button>
 
       {expanded && (
-        <div className="px-4 pb-4 border-t border-gray-50 space-y-3">
+        <div className="px-4 pb-5" style={{ borderTop: `1px solid ${color}10` }}>
           {c.description && (
-            <p className="text-gray-600 text-sm pt-3 leading-relaxed">{c.description}</p>
+            <p className="text-gray-600 text-sm pt-4 leading-relaxed mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>{c.description}</p>
           )}
+          {c.media_url && <MediaDisplay url={c.media_url} type={c.media_type || 'image'} />}
           {c.type === 'Streak' && (
-            <div className="flex gap-1">
+            <div className="flex gap-1 mb-4 mt-2">
               {Array.from({ length: totalDays }).map((_, d) => (
-                <div key={d} className="flex-1 h-2 rounded-full"
-                  style={{ backgroundColor: d < progress ? user.church.primaryColor : '#E5E7EB' }} />
+                <div
+                  key={d}
+                  className="flex-1 h-2 rounded-full transition-all"
+                  style={{ background: d < progress ? `linear-gradient(90deg, ${color}, ${color}cc)` : `${color}15` }}
+                />
               ))}
             </div>
           )}
           {leaderboard.length > 0 && (
-            <div>
-              <button onClick={() => setShowLeaderboard(!showLeaderboard)}
+            <div className="mb-4">
+              <button
+                onClick={() => setShowLeaderboard(!showLeaderboard)}
                 className="text-xs font-semibold mb-2 flex items-center gap-1"
-                style={{ color: user.church.primaryColor }}>
+                style={{ color, fontFamily: "'DM Sans', sans-serif", background: 'none', border: 'none', cursor: 'pointer' }}
+              >
                 🏆 Leaderboard {showLeaderboard ? '∧' : '∨'}
               </button>
               {showLeaderboard && (
-                <div className="space-y-2 mb-3">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
                   {leaderboard.map((p, i) => (
-                    <div key={i} className="flex items-center gap-2 p-2 rounded-xl bg-gray-50">
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 p-2.5 rounded-2xl"
+                      style={{ background: `${color}08` }}
+                    >
                       <span className="text-sm w-5 text-center">{i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}</span>
-                      <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={24} color={user.church.primaryColor} />
-                      <p className="flex-1 text-xs font-semibold text-gray-700">{p.profiles?.full_name || 'Member'}</p>
-                      <p className="text-xs text-gray-500">{p.progress}/{c.total_days || 7} days</p>
-                      {p.completed && <span className="text-xs text-green-600 font-bold">✓</span>}
+                      <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={22} color={color} />
+                      <p className="flex-1 text-xs font-semibold text-gray-700" style={{ fontFamily: "'DM Sans', sans-serif" }}>{p.profiles?.full_name || 'Member'}</p>
+                      <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{p.progress}/{c.total_days || 7}d</p>
+                      {p.completed && <span className="text-xs text-green-500 font-bold">✓</span>}
                     </div>
                   ))}
                 </div>
@@ -1378,22 +2338,18 @@ function ChallengeCard({ challenge: c, user }: { challenge: any; user: User }) {
             </div>
           )}
           {!joined ? (
-            <button onClick={join} disabled={loading}
-              className="w-full py-3 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor, opacity: loading ? 0.7 : 1 }}>
+            <LuxBtn color={color} onClick={join} disabled={loading} style={{ width: '100%' }}>
               {loading ? 'Joining...' : 'Join Challenge'}
-            </button>
+            </LuxBtn>
           ) : progress >= totalDays ? (
             <div className="text-center py-2">
-              <p className="text-2xl mb-1">🏆</p>
-              <p className="font-bold text-green-600 text-sm">Challenge Complete!</p>
+              <p style={{ fontSize: 36, marginBottom: 4 }}>🏆</p>
+              <p className="font-bold text-green-500 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>Challenge Complete!</p>
             </div>
           ) : (
-            <button onClick={logProgress}
-              className="w-full py-3 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              Log Today's Progress (+{Math.round((c.points || 100) / totalDays)} pts)
-            </button>
+            <LuxBtn color={color} onClick={logProgress} style={{ width: '100%' }}>
+              Log Today (+{Math.round((c.points || 100) / totalDays)} pts)
+            </LuxBtn>
           )}
         </div>
       )}
@@ -1411,7 +2367,9 @@ function CommunityScreen({ user }: { user: User }) {
   const [prayerText, setPrayerText] = useState('');
   const [chatText, setChatText] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
+  const [prayerMedia, setPrayerMedia] = useState<{ url: string; type: string } | null>(null);
+  const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
+  const color = user.church.primaryColor;
 
   async function load() {
     const { data: pr } = await supabase.from('prayer_requests')
@@ -1425,22 +2383,26 @@ function CommunityScreen({ user }: { user: User }) {
     if (ch) setChallenges(ch);
 
     const { data: dv } = await supabase.from('devotionals').select('*')
-      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(5);
+      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(7);
     if (dv) setDevotionals(dv);
 
     const { data: cm } = await supabase.from('chat_messages')
       .select('*, profiles(full_name, avatar_url)')
       .eq('church_id', user.church.id).is('group_id', null).eq('is_deleted', false)
-      .order('created_at', { ascending: true }).limit(50);
+      .order('created_at', { ascending: false }).limit(50);
     if (cm) setMsgs(cm.map((m: any) => ({
-      id: m.id, content: m.content, author_id: m.author_id,
+      id: m.id,
+      content: m.content,
+      author_id: m.author_id,
       author_name: m.profiles?.full_name || 'Member',
       author_avatar: m.profiles?.avatar_url,
-      created_at: m.created_at, group_id: null,
+      created_at: m.created_at,
+      group_id: null,
+      media_url: m.media_url,
+      media_type: m.media_type,
     })));
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     load();
     const channel = supabase.channel('community-chat')
@@ -1448,156 +2410,275 @@ function CommunityScreen({ user }: { user: User }) {
         event: 'INSERT', schema: 'public', table: 'chat_messages',
         filter: `church_id=eq.${user.church.id}`,
       }, (payload: any) => {
-        setMsgs(prev => [...prev, {
-          id: payload.new.id, content: payload.new.content,
-          author_id: payload.new.author_id, author_name: 'Member',
-          created_at: payload.new.created_at, group_id: null,
-        }]);
+        setMsgs(prev => [
+          {
+            id: payload.new.id,
+            content: payload.new.content,
+            author_id: payload.new.author_id,
+            author_name: 'Member',
+            created_at: payload.new.created_at,
+            group_id: null,
+            media_url: payload.new.media_url,
+            media_type: payload.new.media_type,
+          },
+          ...prev,
+        ]);
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [user.church.id]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-useEffect(() => { 
-  requestAnimationFrame(() => {
-    const el = document.getElementById('community-chat-messages');
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-}, [msgs]);
-
   async function postPrayer() {
     if (!prayerText.trim()) return;
     await supabase.from('prayer_requests').insert({
-      church_id: user.church.id, author_id: user.id,
-      body: prayerText, is_private: isPrivate,
+      church_id: user.church.id,
+      author_id: user.id,
+      body: prayerText,
+      is_private: isPrivate,
+      media_url: prayerMedia?.url || null,
+      media_type: prayerMedia?.type || null,
     });
-    setPrayerText(''); load();
+    setPrayerText('');
+    setPrayerMedia(null);
+    load();
   }
 
   async function sendChat() {
-    if (!chatText.trim()) return;
+    if (!chatText.trim() && !chatMedia) return;
     await supabase.from('chat_messages').insert({
-      church_id: user.church.id, author_id: user.id, content: chatText, group_id: null,
+      church_id: user.church.id,
+      author_id: user.id,
+      content: chatText,
+      group_id: null,
+      media_url: chatMedia?.url || null,
+      media_type: chatMedia?.type || null,
     });
     setChatText('');
+    setChatMedia(null);
   }
 
+  const tabs = ['prayer', 'challenges', 'devotional', 'chat'];
+
   return (
-    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
-      <div className="flex gap-1 overflow-x-auto pb-1">
-        {['prayer', 'challenges', 'devotional', 'chat'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
-            {t}
-          </button>
-        ))}
-      </div>
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
+      <ScreenHeader title="Community" subtitle="Pray, grow, and connect" color={color} />
 
-      {tab === 'prayer' && (
-        <div className="space-y-3">
-          <div className="bg-white rounded-2xl p-4 shadow-sm">
-            <textarea placeholder="Share a prayer request with your church..."
-              value={prayerText} onChange={e => setPrayerText(e.target.value)}
-              className="w-full text-sm text-gray-700 border border-gray-200 rounded-xl px-3 py-2 h-20 resize-none focus:outline-none" />
-            <div className="flex items-center justify-between mt-2">
-              <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
-                <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="rounded" />
-                Private (admin only)
-              </label>
-              <button onClick={postPrayer}
-                className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
-                style={{ backgroundColor: user.church.primaryColor }}>Post</button>
-            </div>
-          </div>
-          {prayers.map((p, i) => (
-            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-              <div className="flex items-center gap-2 mb-2">
-                <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
-                <div>
-                  <p className="font-semibold text-gray-800 text-sm">{p.profiles?.full_name || 'Anonymous'}</p>
-                  <p className="text-xs text-gray-400">{new Date(p.created_at).toLocaleDateString()}</p>
+      <div className="px-4">
+        {/* Tab pills */}
+        <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1">
+          {tabs.map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex-shrink-0 px-4 py-2 rounded-2xl text-sm font-semibold capitalize"
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+                color: tab === t ? BRAND.white : color,
+                border: `1px solid ${color}${tab === t ? '00' : '20'}`,
+                boxShadow: tab === t ? `0 4px 14px ${color}30` : 'none',
+                transition: 'all 0.2s',
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Prayer tab */}
+        {tab === 'prayer' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div
+              className="rounded-3xl p-4"
+              style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 12px ${color}08` }}
+            >
+              <textarea
+                placeholder="Share a prayer request with your church..."
+                value={prayerText}
+                onChange={e => setPrayerText(e.target.value)}
+                className="w-full text-sm text-gray-700 rounded-2xl px-4 py-3 h-20 resize-none focus:outline-none"
+                style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+              />
+              {prayerMedia && (
+                <div className="mt-2">
+                  <MediaDisplay url={prayerMedia.url} type={prayerMedia.type} />
+                  <button onClick={() => setPrayerMedia(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
                 </div>
-              </div>
-              <p className="text-gray-600 text-sm mb-3">{p.body}</p>
-              <div className="flex gap-3">
-                <button onClick={async () => {
-                  await supabase.from('prayer_requests').update({ pray_count: (p.pray_count || 0) + 1 }).eq('id', p.id);
-                  load();
-                }} className="text-sm font-semibold" style={{ color: user.church.primaryColor }}>
-                  🙏 Pray ({p.pray_count || 0})
-                </button>
-                {(user.id === p.author_id || user.role === 'super_admin' || user.role === 'admin') && (
-                  <button onClick={async () => {
-                    await supabase.from('prayer_requests').update({ is_answered: true }).eq('id', p.id);
-                    load();
-                  }} className="text-sm text-green-600 font-semibold">✓ Answered</button>
-                )}
+              )}
+              <div className="flex items-center justify-between mt-3">
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                    <input type="checkbox" checked={isPrivate} onChange={e => setIsPrivate(e.target.checked)} className="rounded" />
+                    Private
+                  </label>
+                  <MediaPicker folder="prayer" onUpload={(url, type) => setPrayerMedia({ url, type })} />
+                </div>
+                <LuxBtn color={color} onClick={postPrayer} style={{ padding: '9px 20px', fontSize: 13 }}>Post</LuxBtn>
               </div>
             </div>
-          ))}
-        </div>
-      )}
 
-      {tab === 'challenges' && (
-        <div className="space-y-3">
-          {challenges.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-              <p className="text-gray-400 text-sm">No active challenges yet.</p>
-            </div>
-          ) : challenges.map((c, i) => (
-            <ChallengeCard key={i} challenge={c} user={user} />
-          ))}
-        </div>
-      )}
-
-     {tab === 'devotional' && (
-        <DevotionalAccordion user={user} devotionals={devotionals} />
-      )}
-
-      {tab === 'chat' && (
-        <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '60vh' }}>
-          <div className="p-3 border-b border-gray-100">
-            <h3 className="font-bold text-gray-800 text-sm">Church Chat</h3>
-            <p className="text-xs text-gray-400">All members</p>
-          </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-3" id="community-chat-messages">
-              {msgs.map((m, i) => {
-              const own = m.author_id === user.id;
-              return (
-                <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
-                  {!own && <Avatar url={m.author_avatar} name={m.author_name} size={28} color={user.church.primaryColor} />}
-                  <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
-                    {!own && <p className="text-xs text-gray-400 mb-1">{m.author_name}</p>}
-                    <div className="px-3 py-2 rounded-2xl text-sm"
-                      style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
-                      {m.content}
-                    </div>
+            {prayers.length === 0 ? (
+              <EmptyState icon="🙏" message="No prayer requests yet. Be the first to share." />
+            ) : prayers.map((p, i) => (
+              <div
+                key={i}
+                className="rounded-3xl p-4"
+                style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 10px ${color}06` }}
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <Avatar url={p.profiles?.avatar_url} name={p.profiles?.full_name || 'Member'} size={30} color={color} />
+                  <div>
+                    <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{p.profiles?.full_name || 'Anonymous'}</p>
+                    <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{new Date(p.created_at).toLocaleDateString()}</p>
                   </div>
                 </div>
-              );
-            })}
-            <div ref={endRef} />
+                <p className="text-gray-600 text-sm mb-2 leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif" }}>{p.body}</p>
+                {p.media_url && <MediaDisplay url={p.media_url} type={p.media_type || 'image'} />}
+                <div className="flex gap-4 mt-3 pt-3" style={{ borderTop: `1px solid ${color}10` }}>
+                  <button
+                    onClick={async () => {
+                      await supabase.from('prayer_requests').update({ pray_count: (p.pray_count || 0) + 1 }).eq('id', p.id);
+                      load();
+                    }}
+                    className="text-sm font-semibold"
+                    style={{ color, fontFamily: "'DM Sans', sans-serif", background: 'none', border: 'none', cursor: 'pointer' }}
+                  >
+                    🙏 Pray ({p.pray_count || 0})
+                  </button>
+                  {(user.id === p.author_id || isAdmin(user)) && (
+                    <button
+                      onClick={async () => {
+                        await supabase.from('prayer_requests').update({ is_answered: true }).eq('id', p.id);
+                        load();
+                      }}
+                      className="text-sm font-semibold text-green-500"
+                      style={{ fontFamily: "'DM Sans', sans-serif", background: 'none', border: 'none', cursor: 'pointer' }}
+                    >
+                      ✓ Answered
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-          <div className="p-3 border-t border-gray-100 flex gap-2">
-            <input type="text" placeholder="Type a message..." value={chatText}
-              onChange={e => setChatText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
-              className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-            <button onClick={sendChat}
-              className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+        )}
+
+        {/* Challenges tab */}
+        {tab === 'challenges' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {challenges.length === 0 ? (
+              <EmptyState icon="⚡" message="No active challenges yet. Check back soon." />
+            ) : challenges.map((c, i) => (
+              <ChallengeCard key={i} challenge={c} user={user} />
+            ))}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Devotional tab */}
+        {tab === 'devotional' && (
+          <DevotionalAccordion user={user} devotionals={devotionals} />
+        )}
+
+        {/* Chat tab */}
+        {tab === 'chat' && (
+          <div
+            className="rounded-3xl overflow-hidden"
+            style={{
+              background: BRAND.white,
+              border: `1px solid ${color}15`,
+              boxShadow: `0 2px 16px ${color}08`,
+              height: '62vh',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div
+              className="p-4"
+              style={{ borderBottom: `1px solid ${color}10` }}
+            >
+              <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>Church Chat</p>
+              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>All members</p>
+            </div>
+
+            {/* Messages newest at bottom, flex-col-reverse for scroll */}
+            <div
+              className="flex-1 overflow-y-auto p-4 flex flex-col-reverse"
+              style={{ gap: 12 }}
+            >
+              <div>
+                {msgs.map((m, i) => {
+                  const own = m.author_id === user.id;
+                  return (
+                    <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
+                      {!own && (
+                        <Avatar url={m.author_avatar} name={m.author_name} size={26} color={color} />
+                      )}
+                      <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+                        {!own && (
+                          <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.author_name}</p>
+                        )}
+                        {m.content && (
+                          <div
+                            className="px-4 py-2.5 rounded-2xl text-sm"
+                            style={{
+                              background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
+                              color: own ? BRAND.white : '#1F2937',
+                              fontFamily: "'DM Sans', sans-serif",
+                              boxShadow: own ? `0 4px 12px ${color}30` : 'none',
+                              borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                            }}
+                          >
+                            {m.content}
+                          </div>
+                        )}
+                        {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Chat input */}
+            <div
+              className="p-3"
+              style={{ borderTop: `1px solid ${color}10` }}
+            >
+              {chatMedia && (
+                <div className="mb-2">
+                  <MediaDisplay url={chatMedia.url} type={chatMedia.type} />
+                  <button onClick={() => setChatMedia(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
+                </div>
+              )}
+              <div className="flex gap-2 items-center">
+                <MediaPicker folder="chat" onUpload={(url, type) => setChatMedia({ url, type })} />
+                <input
+                  type="text"
+                  placeholder="Type a message..."
+                  value={chatText}
+                  onChange={e => setChatText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+                  className="flex-1 px-4 py-2.5 rounded-2xl text-sm focus:outline-none"
+                  style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+                />
+                <LuxBtn color={color} onClick={sendChat} style={{ padding: '10px 18px', fontSize: 13, flexShrink: 0 }}>
+                  Send
+                </LuxBtn>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
+
+// ── Group Card ─────────────────────────────────────────────────────────────
 function GroupCard({ group: g, user, onEnter }: { group: any; user: User; onEnter: () => void }) {
   const [status, setStatus] = useState<'none' | 'pending' | 'member'>('none');
   const [requests, setRequests] = useState<any[]>([]);
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -1605,17 +2686,18 @@ function GroupCard({ group: g, user, onEnter }: { group: any; user: User; onEnte
         .select('id').eq('group_id', g.id).eq('member_id', user.id).maybeSingle();
       if (membership) { setStatus('member'); return; }
       if (g.leader_id === user.id || g.leader_id_2 === user.id) { setStatus('member'); return; }
+      if (isGroupLeader(user)) { setStatus('member'); return; }
       const { data: req } = await supabase.from('group_join_requests')
         .select('id, status').eq('group_id', g.id).eq('member_id', user.id).maybeSingle();
       if (req) setStatus(req.status === 'approved' ? 'member' : 'pending');
-      if (isAdmin) {
+      if (isAdminUser) {
         const { data: reqs } = await supabase.from('group_join_requests')
           .select('*, profiles(full_name, avatar_url)')
           .eq('group_id', g.id).eq('status', 'pending');
         if (reqs) setRequests(reqs);
       }
     })();
-  }, [g.id, user.id, isAdmin]);
+  }, [g.id, user.id, isAdminUser]);
 
   async function requestJoin() {
     await supabase.from('group_join_requests').insert({
@@ -1637,58 +2719,67 @@ function GroupCard({ group: g, user, onEnter }: { group: any; user: User; onEnte
   }
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+    <div
+      className="rounded-3xl overflow-hidden"
+      style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 12px ${color}08` }}
+    >
       <div className="p-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold flex-shrink-0"
-            style={{ backgroundColor: user.church.primaryColor }}>
+          <div
+            className="flex items-center justify-center rounded-2xl font-bold text-white flex-shrink-0"
+            style={{
+              width: 44,
+              height: 44,
+              background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+              fontSize: 18,
+              fontFamily: "'Cormorant Garamond', serif",
+              boxShadow: `0 4px 12px ${color}30`,
+            }}
+          >
             {g.name.charAt(0)}
           </div>
           <div>
-            <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
-            {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
+            <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18 }}>{g.name}</p>
+            {g.description && <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{g.description}</p>}
             {requests.length > 0 && (
-              <p className="text-xs font-semibold mt-0.5" style={{ color: user.church.primaryColor }}>
+              <p className="text-xs font-semibold mt-0.5" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>
                 {requests.length} pending request{requests.length > 1 ? 's' : ''}
               </p>
             )}
           </div>
         </div>
         <div className="flex gap-2">
-          {status === 'member' || isAdmin ? (
-            <button onClick={onEnter}
-              className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {isAdmin ? 'Enter' : 'Chat'}
-            </button>
+          {(status === 'member' || isAdminUser || isGroupLeader(user)) ? (
+            <LuxBtn color={color} onClick={onEnter} style={{ padding: '8px 16px', fontSize: 13 }}>
+              {isAdminUser ? 'Enter' : 'Chat'}
+            </LuxBtn>
           ) : status === 'pending' ? (
-            <span className="px-3 py-1 rounded-xl text-xs font-semibold bg-yellow-100 text-yellow-700">
+            <span
+              className="px-3 py-1.5 rounded-xl text-xs font-semibold"
+              style={{ background: '#fef3c7', color: '#92400e', fontFamily: "'DM Sans', sans-serif" }}
+            >
               Pending
             </span>
           ) : (
-            <button onClick={requestJoin}
-              className="px-3 py-1 rounded-xl text-xs font-semibold border"
-              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+            <LuxBtn color={color} variant="outline" onClick={requestJoin} style={{ padding: '8px 16px', fontSize: 13 }}>
               Request to Join
-            </button>
+            </LuxBtn>
           )}
         </div>
       </div>
-      {isAdmin && requests.length > 0 && (
-        <div className="px-4 pb-4 border-t border-gray-50 space-y-2 pt-3">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Join Requests</p>
+
+      {isAdminUser && requests.length > 0 && (
+        <div className="px-4 pb-4" style={{ borderTop: `1px solid ${color}10` }}>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest pt-3 mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Join Requests</p>
           {requests.map((r, i) => (
-            <div key={i} className="flex items-center justify-between p-2 rounded-xl bg-gray-50">
+            <div key={i} className="flex items-center justify-between p-2.5 rounded-2xl mb-2" style={{ background: `${color}08` }}>
               <div className="flex items-center gap-2">
-                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={28} color={user.church.primaryColor} />
-                <p className="text-sm font-semibold text-gray-800">{r.profiles?.full_name || 'Member'}</p>
+                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={26} color={color} />
+                <p className="text-sm font-semibold text-gray-800" style={{ fontFamily: "'DM Sans', sans-serif" }}>{r.profiles?.full_name || 'Member'}</p>
               </div>
               <div className="flex gap-2">
-                <button onClick={() => approveRequest(r.id, r.member_id)}
-                  className="px-2 py-1 rounded-lg text-white text-xs font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
-                <button onClick={() => denyRequest(r.id)}
-                  className="px-2 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-semibold">Deny</button>
+                <LuxBtn color={color} onClick={() => approveRequest(r.id, r.member_id)} style={{ padding: '6px 14px', fontSize: 12 }}>Approve</LuxBtn>
+                <LuxBtn color="#ef4444" variant="ghost" onClick={() => denyRequest(r.id)} style={{ padding: '6px 14px', fontSize: 12 }}>Deny</LuxBtn>
               </div>
             </div>
           ))}
@@ -1706,13 +2797,13 @@ function GroupsScreen({ user }: { user: User }) {
   const [selGroup, setSelGroup] = useState<any>(null);
   const [gMsgs, setGMsgs] = useState<Message[]>([]);
   const [chatText, setChatText] = useState('');
-  const endRef = useRef<HTMLDivElement>(null);
+  const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
       const { data: g } = await supabase.from('groups')
-        .select('*')
-        .eq('church_id', user.church.id).order('created_at', { ascending: false });
+        .select('*').eq('church_id', user.church.id).order('created_at', { ascending: false });
       if (g) setGroups(g);
       const { data: lb } = await supabase.from('profiles')
         .select('id, full_name, avatar_url, points, streak')
@@ -1727,12 +2818,17 @@ function GroupsScreen({ user }: { user: User }) {
       const { data } = await supabase.from('chat_messages')
         .select('*, profiles(full_name, avatar_url)')
         .eq('group_id', selGroup.id).eq('is_deleted', false)
-        .order('created_at', { ascending: true }).limit(50);
+        .order('created_at', { ascending: false }).limit(50);
       if (data) setGMsgs(data.map((m: any) => ({
-        id: m.id, content: m.content, author_id: m.author_id,
+        id: m.id,
+        content: m.content,
+        author_id: m.author_id,
         author_name: m.profiles?.full_name || 'Member',
         author_avatar: m.profiles?.avatar_url,
-        created_at: m.created_at, group_id: m.group_id,
+        created_at: m.created_at,
+        group_id: m.group_id,
+        media_url: m.media_url,
+        media_type: m.media_type,
       })));
     })();
     const channel = supabase.channel(`group-${selGroup.id}`)
@@ -1740,182 +2836,299 @@ function GroupsScreen({ user }: { user: User }) {
         event: 'INSERT', schema: 'public', table: 'chat_messages',
         filter: `group_id=eq.${selGroup.id}`,
       }, (payload: any) => {
-        setGMsgs(prev => [...prev, {
-          id: payload.new.id, content: payload.new.content,
-          author_id: payload.new.author_id, author_name: 'Member',
-          created_at: payload.new.created_at, group_id: payload.new.group_id,
-        }]);
+        setGMsgs(prev => [
+          {
+            id: payload.new.id,
+            content: payload.new.content,
+            author_id: payload.new.author_id,
+            author_name: 'Member',
+            created_at: payload.new.created_at,
+            group_id: payload.new.group_id,
+            media_url: payload.new.media_url,
+            media_type: payload.new.media_type,
+          },
+          ...prev,
+        ]);
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [selGroup]);
 
-useEffect(() => { 
-  requestAnimationFrame(() => {
-    const el = document.getElementById('group-chat-messages');
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-}, [gMsgs]);
-
   async function sendMsg() {
-    if (!chatText.trim() || !selGroup) return;
+    if (!chatText.trim() && !chatMedia) return;
+    if (!selGroup) return;
     await supabase.from('chat_messages').insert({
-      church_id: user.church.id, group_id: selGroup.id,
-      author_id: user.id, content: chatText,
+      church_id: user.church.id,
+      group_id: selGroup.id,
+      author_id: user.id,
+      content: chatText,
+      media_url: chatMedia?.url || null,
+      media_type: chatMedia?.type || null,
     });
     setChatText('');
+    setChatMedia(null);
   }
 
   if (selGroup) return (
-    <div className="p-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
-      <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '70vh' }}>
-        <div className="p-3 border-b border-gray-100 flex items-center gap-2">
-          <button onClick={() => setSelGroup(null)} className="text-gray-400 text-lg">‹</button>
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
+      <div
+        className="rounded-3xl mx-4 mt-4 overflow-hidden flex flex-col"
+        style={{
+          background: BRAND.white,
+          border: `1px solid ${color}15`,
+          boxShadow: `0 2px 16px ${color}08`,
+          height: '72vh',
+        }}
+      >
+        <div
+          className="p-4 flex items-center gap-3"
+          style={{ borderBottom: `1px solid ${color}10` }}
+        >
+          <button
+            onClick={() => setSelGroup(null)}
+            className="flex items-center justify-center rounded-full"
+            style={{ width: 36, height: 36, background: `${color}12`, color, border: 'none', cursor: 'pointer', fontSize: 20 }}
+          >
+            ‹
+          </button>
           <div>
-            <h3 className="font-bold text-gray-800 text-sm">{selGroup.name}</h3>
-            <p className="text-xs text-gray-400">Group Chat</p>
+            <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>{selGroup.name}</p>
+            <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Group Chat</p>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3" id="group-chat-messages">
+
+        {/* Messages newest at bottom using flex-col-reverse */}
+        <div className="flex-1 overflow-y-auto p-4 flex flex-col-reverse">
+          <div>
             {gMsgs.map((m, i) => {
-            const own = m.author_id === user.id;
-            return (
-              <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
-                {!own && <Avatar url={m.author_avatar} name={m.author_name} size={28} color={user.church.primaryColor} />}
-                <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
-                  {!own && <p className="text-xs text-gray-400 mb-1">{m.author_name}</p>}
-                  <div className="px-3 py-2 rounded-2xl text-sm"
-                    style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
-                    {m.content}
+              const own = m.author_id === user.id;
+              return (
+                <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
+                  {!own && (
+                    <Avatar url={m.author_avatar} name={m.author_name} size={26} color={color} />
+                  )}
+                  <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+                    {!own && (
+                      <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.author_name}</p>
+                    )}
+                    {m.content && (
+                      <div
+                        className="px-4 py-2.5 text-sm"
+                        style={{
+                          background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
+                          color: own ? BRAND.white : '#1F2937',
+                          fontFamily: "'DM Sans', sans-serif",
+                          boxShadow: own ? `0 4px 12px ${color}30` : 'none',
+                          borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                        }}
+                      >
+                        {m.content}
+                      </div>
+                    )}
+                    {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
                   </div>
                 </div>
-              </div>
-            );
-          })}
-          <div ref={endRef} />
+              );
+            })}
+          </div>
         </div>
-        <div className="p-3 border-t border-gray-100 flex gap-2">
-          <input type="text" placeholder="Type a message..." value={chatText}
-            onChange={e => setChatText(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') sendMsg(); }}
-            className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <button onClick={sendMsg}
-            className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
-            style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+
+        <div className="p-3" style={{ borderTop: `1px solid ${color}10` }}>
+          {chatMedia && (
+            <div className="mb-2">
+              <MediaDisplay url={chatMedia.url} type={chatMedia.type} />
+              <button onClick={() => setChatMedia(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
+            </div>
+          )}
+          <div className="flex gap-2 items-center">
+            <MediaPicker folder={`group-${selGroup.id}`} onUpload={(url, type) => setChatMedia({ url, type })} />
+            <input
+              type="text"
+              placeholder="Type a message..."
+              value={chatText}
+              onChange={e => setChatText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') sendMsg(); }}
+              className="flex-1 px-4 py-2.5 rounded-2xl text-sm focus:outline-none"
+              style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+            />
+            <LuxBtn color={color} onClick={sendMsg} style={{ padding: '10px 18px', fontSize: 13, flexShrink: 0 }}>
+              Send
+            </LuxBtn>
+          </div>
         </div>
       </div>
     </div>
   );
 
   return (
-    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
-      <div className="flex gap-2">
-        {['groups', 'leaderboard'].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-1 py-2 rounded-xl text-sm font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
-            {t}
-          </button>
-        ))}
-      </div>
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
+      <ScreenHeader title="Groups" subtitle="Find your community" color={color} />
 
-      {tab === 'groups' && (
-        <div className="space-y-3">
-          {groups.length === 0 ? (
-            <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-              <p className="text-gray-400 text-sm">No groups yet.</p>
-            </div>
-          ) : groups.map((g, i) => (
-            <GroupCard key={i} group={g} user={user} onEnter={() => setSelGroup(g)} />
+      <div className="px-4">
+        <div className="flex gap-2 mb-4">
+          {['groups', 'leaderboard'].map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className="flex-1 py-2.5 rounded-2xl text-sm font-semibold capitalize"
+              style={{
+                fontFamily: "'DM Sans', sans-serif",
+                background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+                color: tab === t ? BRAND.white : color,
+                border: `1px solid ${color}${tab === t ? '00' : '20'}`,
+                boxShadow: tab === t ? `0 4px 14px ${color}30` : 'none',
+                transition: 'all 0.2s',
+              }}
+            >
+              {t}
+            </button>
           ))}
         </div>
-      )}
 
-      {tab === 'leaderboard' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <h3 className="font-bold text-gray-800 mb-4">Points Leaderboard</h3>
-          <div className="space-y-3">
-            {board.map((m, i) => (
-              <div key={i} className="flex items-center gap-3 p-2 rounded-xl"
-                style={{ backgroundColor: m.id === user.id ? '#F5F0FF' : 'transparent' }}>
-                <span className="w-7 text-center font-bold">
-                  {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
-                </span>
-                <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={36} color={user.church.primaryColor} />
-                <div className="flex-1">
-                  <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Member'}</p>
-                  <p className="text-xs text-gray-500">{m.streak || 0} day streak 🔥</p>
-                </div>
-                <p className="font-bold text-sm" style={{ color: user.church.primaryColor }}>
-                  {(m.points || 0).toLocaleString()} pts
-                </p>
-              </div>
+        {tab === 'groups' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {groups.length === 0 ? (
+              <EmptyState icon="👥" message="No groups yet. Ask your pastor to create some." />
+            ) : groups.map((g, i) => (
+              <GroupCard key={i} group={g} user={user} onEnter={() => setSelGroup(g)} />
             ))}
           </div>
-        </div>
-      )}
+        )}
+
+        {tab === 'leaderboard' && (
+          <div
+            className="rounded-3xl p-5"
+            style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}
+          >
+            <SectionLabel color={color}>Points Leaderboard</SectionLabel>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {board.map((m, i) => (
+                <div
+                  key={i}
+                  className="flex items-center gap-3 p-3 rounded-2xl"
+                  style={{ background: m.id === user.id ? `${color}0d` : 'transparent', border: m.id === user.id ? `1px solid ${color}20` : '1px solid transparent' }}
+                >
+                  <span className="w-7 text-center font-bold" style={{ fontSize: 18 }}>
+                    {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
+                  </span>
+                  <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={34} color={color} />
+                  <div className="flex-1">
+                    <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.full_name || 'Member'}</p>
+                    <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.streak || 0} day streak 🔥</p>
+                  </div>
+                  <p className="font-bold text-sm" style={{ color, fontFamily: "'Cormorant Garamond', serif", fontSize: 18 }}>
+                    {(m.points || 0).toLocaleString()}
+                    <span className="text-xs font-normal text-gray-400 ml-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>pts</span>
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
-
 // ── More Screen ────────────────────────────────────────────────────────────
-function MoreScreen({ user, initialSub, onSubChange }: { user: User; initialSub?: string; onSubChange?: (s: string) => void }) {
+function MoreScreen({ user, initialSub, onSubChange }: {
+  user: User;
+  initialSub?: string;
+  onSubChange?: (s: string) => void;
+}) {
   const [sub, setSub] = useState(initialSub || 'menu');
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
-const back = () => { setSub('menu'); onSubChange?.('menu'); };
+  const color = user.church.primaryColor;
+  const isAdminUser = isAdmin(user);
+
+  const back = () => { setSub('menu'); onSubChange?.('menu'); };
+  const go = (tab: string) => { setSub(tab); onSubChange?.(tab); };
 
   const items = [
-    { icon: '💳', label: 'Give', tab: 'giving' },
-    { icon: '📅', label: 'Events', tab: 'events' },
-    { icon: '🏢', label: 'Business Directory', tab: 'biz' },
-    { icon: '👤', label: 'Member Directory', tab: 'members' },
-    { icon: '📣', label: 'Announcements', tab: 'ann' },
-    { icon: '📍', label: 'Check In', tab: 'checkin' },
-    { icon: '👶', label: "Children's Check-In", tab: 'children' },
-    { icon: '💬', label: 'Message Admin', tab: 'dm' },
-    { icon: '⚙️', label: 'My Profile', tab: 'profile' },
-    ...(isAdmin ? [
-      { icon: '🔧', label: 'Admin Panel', tab: 'admin' },
-      { icon: '💰', label: 'Pricing', tab: 'pricing' },
+    { icon: '💳', label: 'Give', tab: 'giving', desc: 'Support your church' },
+    { icon: '📅', label: 'Events', tab: 'events', desc: 'Upcoming gatherings' },
+    { icon: '🏢', label: 'Business Directory', tab: 'biz', desc: 'Support church members' },
+    { icon: '👤', label: 'Member Directory', tab: 'members', desc: 'Find your community' },
+    { icon: '📣', label: 'Announcements', tab: 'ann', desc: 'Church updates' },
+    { icon: '📍', label: 'Check In', tab: 'checkin', desc: 'Earn attendance points' },
+    { icon: '👶', label: "Children's Check-In", tab: 'children', desc: 'Safe drop-off and pickup' },
+    { icon: '💬', label: 'Message Admin', tab: 'dm', desc: 'Private message to leadership' },
+    { icon: '⚙️', label: 'My Profile', tab: 'profile', desc: 'Edit your info and photo' },
+    ...(isAdminUser ? [
+      { icon: '🔧', label: 'Admin Panel', tab: 'admin', desc: 'Manage your church' },
+      { icon: '💰', label: 'Pricing', tab: 'pricing', desc: 'Plans and billing' },
     ] : []),
   ];
 
   return (
-    <div className="p-4 space-y-4" style={{ backgroundColor: BRAND.bg, minHeight: '100vh' }}>
+    <div style={{ backgroundColor: BRAND.bg, minHeight: '100vh', paddingBottom: 80 }}>
       {sub === 'menu' && (
-        <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="p-4" style={{ background: `linear-gradient(135deg, ${user.church.primaryColor}, ${BRAND.plum})` }}>
-            <div className="flex items-center gap-3">
-              <Avatar url={user.avatarUrl} name={user.name || user.email} size={48} />
+        <>
+          {/* Profile hero */}
+          <div
+            className="mx-4 mt-4 rounded-3xl p-5 text-white relative overflow-hidden"
+            style={{
+              background: `linear-gradient(135deg, ${color} 0%, ${color}cc 60%, #4c1d95 100%)`,
+              boxShadow: `0 8px 32px ${color}40`,
+            }}
+          >
+            <div style={{ position: 'absolute', top: -20, right: -20, width: 120, height: 120, borderRadius: '50%', background: 'rgba(255,255,255,0.07)' }} />
+            <div className="flex items-center gap-4 relative z-10">
+              <Avatar url={user.avatarUrl} name={user.name || user.email} size={52} color="rgba(255,255,255,0.5)" />
               <div>
-                <p className="font-bold text-white">{user.name || user.email}</p>
-                <p className="text-xs text-white/70">{user.church.name}</p>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 700 }}>{user.name || user.email}</p>
+                <p style={{ fontSize: 12, opacity: 0.75, fontFamily: "'DM Sans', sans-serif", marginTop: 2 }}>{user.church.name}</p>
+                <p style={{ fontSize: 11, opacity: 0.6, fontFamily: "'DM Sans', sans-serif", marginTop: 1, textTransform: 'capitalize' }}>
+                  {user.role.replace(/_/g, ' ')}
+                  {user.secondaryRole ? ` · ${user.secondaryRole.replace(/_/g, ' ')}` : ''}
+                  {user.secondaryRole2 ? ` · ${user.secondaryRole2.replace(/_/g, ' ')}` : ''}
+                </p>
               </div>
             </div>
           </div>
-          <div className="divide-y divide-gray-50">
+
+          {/* Menu items */}
+          <div className="mx-4 mt-4 rounded-3xl overflow-hidden" style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 16px ${color}08` }}>
             {items.map((item, i) => (
-              <button key={i} onClick={() => setSub(item.tab)}
-                className="w-full flex items-center gap-3 p-4 hover:bg-gray-50 text-left">
-                <span className="text-xl w-8">{item.icon}</span>
-                <span className="font-medium text-gray-700">{item.label}</span>
-                <span className="ml-auto text-gray-400">›</span>
+              <button
+                key={i}
+                onClick={() => go(item.tab)}
+                className="w-full flex items-center gap-3 p-4 text-left"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: i < items.length - 1 ? `1px solid ${color}08` : 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                <div
+                  className="flex items-center justify-center rounded-2xl flex-shrink-0"
+                  style={{ width: 42, height: 42, background: `${color}10` }}
+                >
+                  <span style={{ fontSize: 20 }}>{item.icon}</span>
+                </div>
+                <div className="flex-1">
+                  <p className="font-semibold text-gray-800" style={{ fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>{item.label}</p>
+                  <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{item.desc}</p>
+                </div>
+                <span style={{ color: `${color}50`, fontSize: 20 }}>›</span>
               </button>
             ))}
           </div>
-        </div>
+        </>
       )}
-      {sub === 'giving' && <GivingScreen user={user} onBack={back} />}
-      {sub === 'events' && <EventsScreen user={user} onBack={back} />}
-      {sub === 'biz' && <BusinessDirectoryScreen user={user} onBack={back} />}
-      {sub === 'members' && <MemberDirectoryScreen user={user} onBack={back} />}
-      {sub === 'ann' && <AnnouncementsScreen user={user} onBack={back} />}
-      {sub === 'checkin' && <CheckInScreen user={user} onBack={back} />}
-      {sub === 'children' && <ChildrenCheckInScreen user={user} onBack={back} />}
-      {sub === 'profile' && <ProfileScreen user={user} onBack={back} />}
-      {sub === 'admin' && <AdminScreen user={user} onBack={back} />}
-      {sub === 'pricing' && <PricingScreen user={user} onBack={back} />}
-      {sub === 'dm' && <DirectMessageScreen user={user} onBack={back} />}
+
+      <div className="px-4 pt-4">
+        {sub === 'giving' && <GivingScreen user={user} onBack={back} />}
+        {sub === 'events' && <EventsScreen user={user} onBack={back} />}
+        {sub === 'biz' && <BusinessDirectoryScreen user={user} onBack={back} />}
+        {sub === 'members' && <MemberDirectoryScreen user={user} onBack={back} />}
+        {sub === 'ann' && <AnnouncementsScreen user={user} onBack={back} />}
+        {sub === 'checkin' && <CheckInScreen user={user} onBack={back} />}
+        {sub === 'children' && <ChildrenCheckInScreen user={user} onBack={back} />}
+        {sub === 'profile' && <ProfileScreen user={user} onBack={back} />}
+        {sub === 'admin' && <AdminScreen user={user} onBack={back} />}
+        {sub === 'pricing' && <PricingScreen user={user} onBack={back} />}
+        {sub === 'dm' && <DirectMessageScreen user={user} onBack={back} />}
+      </div>
     </div>
   );
 }
@@ -1930,7 +3143,8 @@ function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [addOpen, setAddOpen] = useState(false);
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
 
   async function loadFunds() {
     const { data } = await supabase.from('giving_funds').select('*')
@@ -1950,9 +3164,7 @@ function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
     if (data) setTxns(data);
   }
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadFunds(); loadTxns(); }, [user.church.id]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
 
   async function addFund() {
     if (!newName.trim()) return;
@@ -1963,80 +3175,121 @@ function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
     setNewName(''); setNewDesc(''); setAddOpen(false); loadFunds();
   }
 
+  const giveLink = user.church.givingStripeLink || 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00';
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Give</h2>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Give" onBack={onBack} color={color} />
+
       <div className="flex gap-2">
-        {['give', 'history', ...(isAdmin ? ['manage funds'] : [])].map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-1 py-2 rounded-xl text-xs font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+        {['give', 'history', ...(isAdminUser ? ['manage funds'] : [])].map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className="flex-1 py-2.5 rounded-2xl text-xs font-semibold capitalize"
+            style={{
+              fontFamily: "'DM Sans', sans-serif",
+              background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+              color: tab === t ? BRAND.white : color,
+              border: `1px solid ${color}${tab === t ? '00' : '20'}`,
+              boxShadow: tab === t ? `0 4px 14px ${color}30` : 'none',
+              transition: 'all 0.2s',
+            }}
+          >
             {t}
           </button>
         ))}
       </div>
 
       {tab === 'give' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <p className="text-sm font-semibold text-gray-700">Select Fund</p>
-          <div className="space-y-2">
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}>
+          <SectionLabel color={color}>Select Fund</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
             {funds.map(f => (
-              <button key={f.id} onClick={() => setSel(f.id)}
-                className="w-full p-3 rounded-xl border-2 text-left"
-                style={{ borderColor: sel === f.id ? user.church.primaryColor : '#E5E7EB', backgroundColor: sel === f.id ? '#F5F0FF' : BRAND.white }}>
-                <p className="font-semibold text-gray-800 text-sm">{f.name}</p>
-                {f.description && <p className="text-xs text-gray-500">{f.description}</p>}
+              <button
+                key={f.id}
+                onClick={() => setSel(f.id)}
+                className="w-full p-4 rounded-2xl text-left"
+                style={{
+                  border: `2px solid ${sel === f.id ? color : color + '20'}`,
+                  background: sel === f.id ? `${color}0d` : BRAND.white,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                }}
+              >
+                <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.name}</p>
+                {f.description && <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.description}</p>}
               </button>
             ))}
           </div>
-          <p className="text-sm font-semibold text-gray-700">Amount</p>
-          <div className="flex gap-2 flex-wrap">
+
+          <SectionLabel color={color}>Choose Amount</SectionLabel>
+          <div className="flex gap-2 flex-wrap mb-3">
             {[25, 50, 100, 250, 500].map(a => (
-              <button key={a} onClick={() => setAmount(String(a))}
-                className="px-3 py-2 rounded-xl text-sm font-semibold border-2"
+              <button
+                key={a}
+                onClick={() => setAmount(String(a))}
+                className="px-4 py-2.5 rounded-2xl text-sm font-semibold"
                 style={{
-                  borderColor: amount === String(a) ? user.church.primaryColor : '#E5E7EB',
-                  backgroundColor: amount === String(a) ? '#F5F0FF' : BRAND.white,
-                  color: amount === String(a) ? user.church.primaryColor : '#374151',
-                }}>
+                  border: `2px solid ${amount === String(a) ? color : color + '20'}`,
+                  background: amount === String(a) ? `${color}0d` : BRAND.white,
+                  color: amount === String(a) ? color : '#374151',
+                  cursor: 'pointer',
+                  fontFamily: "'DM Sans', sans-serif",
+                  transition: 'all 0.2s',
+                }}
+              >
                 ${a}
               </button>
             ))}
           </div>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
-            <input type="number" placeholder="Custom amount" value={amount}
+          <div className="relative mb-5">
+            <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold" style={{ fontFamily: "'DM Sans', sans-serif" }}>$</span>
+            <input
+              type="number"
+              placeholder="Custom amount"
+              value={amount}
               onChange={e => setAmount(e.target.value)}
-              className="w-full pl-8 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+              style={{ ...inputStyle, paddingLeft: 28 }}
+            />
           </div>
-          <button onClick={() => {
-            if (!amount || !sel) { alert('Select a fund and enter an amount'); return; }
-            window.open('https://buy.stripe.com/28E8wPevd5si2P09aub3q00', '_blank');
-          }} className="w-full py-4 rounded-xl text-white font-bold text-lg"
-            style={{ backgroundColor: user.church.primaryColor }}>
+
+          <LuxBtn
+            color={color}
+            onClick={() => {
+              if (!amount || !sel) { alert('Select a fund and enter an amount'); return; }
+              window.open(giveLink, '_blank');
+            }}
+            style={{ width: '100%', fontSize: 16, padding: '15px 0' }}
+          >
             Give {amount ? `$${amount}` : 'Now'}
-          </button>
-          <p className="text-center text-xs text-gray-400">Secure payment via Stripe. 0.5% platform fee applies.</p>
+          </LuxBtn>
+          <p className="text-center text-xs text-gray-400 mt-3" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Secure payment via Stripe
+          </p>
         </div>
       )}
 
       {tab === 'history' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <h3 className="font-bold text-gray-800 mb-3">Giving History</h3>
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}>
+          <SectionLabel color={color}>Giving History</SectionLabel>
           {txns.length === 0 ? (
-            <p className="text-gray-400 text-sm text-center py-4">No giving history yet.</p>
+            <EmptyState icon="💳" message="No giving history yet." />
           ) : (
-            <div className="space-y-3">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               {txns.map((t, i) => (
-                <div key={i} className="flex justify-between items-center py-2 border-b border-gray-50">
+                <div key={i} className="flex justify-between items-center py-3" style={{ borderBottom: `1px solid ${color}08` }}>
                   <div>
-                    <p className="font-semibold text-gray-800 text-sm">{t.giving_funds?.name}</p>
-                    <p className="text-xs text-gray-500">{new Date(t.created_at).toLocaleDateString()}</p>
+                    <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{t.giving_funds?.name}</p>
+                    <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{new Date(t.created_at).toLocaleDateString()}</p>
                   </div>
-                  <p className="font-bold" style={{ color: user.church.primaryColor }}>${t.amount}</p>
+                  <p className="font-bold" style={{ color, fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>${t.amount}</p>
                 </div>
               ))}
             </div>
@@ -2044,42 +3297,33 @@ function GivingScreen({ user, onBack }: { user: User; onBack: () => void }) {
         </div>
       )}
 
-      {tab === 'manage funds' && isAdmin && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <div className="flex justify-between items-center">
-            <h3 className="font-bold text-gray-800">Giving Funds</h3>
-            <button onClick={() => setAddOpen(!addOpen)}
-              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>+ Add Fund</button>
+      {tab === 'manage funds' && isAdminUser && (
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <div className="flex justify-between items-center mb-4">
+            <SectionLabel color={color}>Giving Funds</SectionLabel>
+            <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px' }}>+ Add Fund</LuxBtn>
           </div>
           {addOpen && (
-            <div className="p-3 rounded-xl border border-gray-200 space-y-2">
-              <input type="text" placeholder="Fund name" value={newName}
-                onChange={e => setNewName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-              <input type="text" placeholder="Description (optional)" value={newDesc}
-                onChange={e => setNewDesc(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <div className="p-4 rounded-2xl mb-4" style={{ border: `1px solid ${color}20`, background: `${color}06` }}>
+              <input type="text" placeholder="Fund name" value={newName} onChange={e => setNewName(e.target.value)} style={{ ...inputStyle, marginBottom: 10 }} />
+              <input type="text" placeholder="Description (optional)" value={newDesc} onChange={e => setNewDesc(e.target.value)} style={{ ...inputStyle, marginBottom: 12 }} />
               <div className="flex gap-2">
-                <button onClick={() => setAddOpen(false)}
-                  className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-                <button onClick={addFund}
-                  className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>Save</button>
+                <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+                <LuxBtn color={color} onClick={addFund} style={{ flex: 1, fontSize: 13 }}>Save</LuxBtn>
               </div>
             </div>
           )}
           {funds.map((f, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
+            <div key={i} className="flex items-center justify-between p-3 rounded-2xl mb-2" style={{ border: `1px solid ${color}12` }}>
               <div>
-                <p className="font-semibold text-gray-800 text-sm">{f.name}</p>
-                {f.is_default && <span className="text-xs text-green-600">Default</span>}
+                <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.name}</p>
+                {f.is_default && <span className="text-xs text-green-500 font-semibold">Default</span>}
               </div>
-              <button onClick={async () => {
-                await supabase.from('giving_funds').update({ is_active: !f.is_active }).eq('id', f.id);
-                loadFunds();
-              }} className="text-xs px-3 py-1 rounded-xl"
-                style={{ backgroundColor: f.is_active ? '#F0FFF4' : '#FFF5F5', color: f.is_active ? '#166534' : '#991B1B' }}>
+              <button
+                onClick={async () => { await supabase.from('giving_funds').update({ is_active: !f.is_active }).eq('id', f.id); loadFunds(); }}
+                className="text-xs px-3 py-1.5 rounded-xl font-semibold"
+                style={{ background: f.is_active ? '#f0fdf4' : '#fef2f2', color: f.is_active ? '#166534' : '#991b1b', fontFamily: "'DM Sans', sans-serif" }}
+              >
                 {f.is_active ? 'Active' : 'Inactive'}
               </button>
             </div>
@@ -2095,79 +3339,81 @@ function EventsScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [events, setEvents] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', location: '', event_date: '' });
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const [mediaAttach, setMediaAttach] = useState<{ url: string; type: string } | null>(null);
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
 
   async function load() {
     const { data } = await supabase.from('events').select('*')
       .eq('church_id', user.church.id).order('event_date', { ascending: true });
     if (data) setEvents(data);
   }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-          <h2 className="font-bold text-gray-800 text-lg">Events</h2>
-        </div>
-        {isAdmin && (
-          <button onClick={() => setAddOpen(!addOpen)}
-            className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-            style={{ backgroundColor: user.church.primaryColor }}>+ Add</button>
+        <BackHeader title="Events" onBack={onBack} color={color} />
+        {isAdminUser && (
+          <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px', marginRight: 4 }}>+ Add</LuxBtn>
         )}
       </div>
+
       {addOpen && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <input type="text" placeholder="Event title" value={form.title}
-            onChange={e => setForm({ ...form, title: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <input type="text" placeholder="Location" value={form.location}
-            onChange={e => setForm({ ...form, location: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <input type="datetime-local" value={form.event_date}
-            onChange={e => setForm({ ...form, event_date: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <textarea placeholder="Description (optional)" value={form.description}
-            onChange={e => setForm({ ...form, description: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-          <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={async () => {
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <input type="text" placeholder="Event title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <input type="text" placeholder="Location" value={form.location} onChange={e => setForm({ ...form, location: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <input type="datetime-local" value={form.event_date} onChange={e => setForm({ ...form, event_date: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <textarea placeholder="Description (optional)" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={{ ...inputStyle, minHeight: 80, resize: 'vertical', marginBottom: 10 }} />
+          {mediaAttach && (
+            <div className="mb-3">
+              <MediaDisplay url={mediaAttach.url} type={mediaAttach.type} />
+              <button onClick={() => setMediaAttach(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
+            </div>
+          )}
+          <MediaPicker folder="events" onUpload={(url, type) => setMediaAttach({ url, type })} />
+          <div className="flex gap-2 mt-3">
+            <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+            <LuxBtn color={color} onClick={async () => {
               if (!form.title || !form.event_date) return;
-              await supabase.from('events').insert({ ...form, church_id: user.church.id, created_by: user.id });
-              setAddOpen(false); setForm({ title: '', description: '', location: '', event_date: '' }); load();
-            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Save</button>
+              await supabase.from('events').insert({
+                ...form, church_id: user.church.id, created_by: user.id,
+                media_url: mediaAttach?.url || null, media_type: mediaAttach?.type || null,
+              });
+              setAddOpen(false); setForm({ title: '', description: '', location: '', event_date: '' }); setMediaAttach(null); load();
+            }} style={{ flex: 1, fontSize: 13 }}>Save</LuxBtn>
           </div>
         </div>
       )}
-      <div className="space-y-3">
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {events.length === 0 ? (
-          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <p className="text-gray-400 text-sm">No events yet.</p>
-          </div>
+          <EmptyState icon="📅" message="No events yet." />
         ) : events.map((ev, i) => {
           const d = new Date(ev.event_date);
           return (
-            <div key={i} className="bg-white rounded-2xl p-4 shadow-sm flex gap-3">
-              <div className="w-14 h-14 rounded-xl flex flex-col items-center justify-center text-white flex-shrink-0"
-                style={{ backgroundColor: user.church.primaryColor }}>
-                <span className="text-xl font-bold leading-none">{d.getDate()}</span>
-                <span className="text-xs">{d.toLocaleString('default', { month: 'short' })}</span>
+            <div key={i} className="rounded-3xl p-4 flex gap-4" style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 10px ${color}06` }}>
+              <div
+                className="flex flex-col items-center justify-center rounded-2xl flex-shrink-0"
+                style={{ width: 52, height: 58, background: `linear-gradient(135deg, ${color}, ${color}cc)`, boxShadow: `0 4px 14px ${color}30` }}
+              >
+                <span style={{ fontSize: 20, fontWeight: 800, color: BRAND.white, fontFamily: "'Cormorant Garamond', serif", lineHeight: 1 }}>{d.getDate()}</span>
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontFamily: "'DM Sans', sans-serif" }}>{d.toLocaleString('default', { month: 'short' })}</span>
               </div>
               <div className="flex-1">
-                <p className="font-bold text-gray-800">{ev.title}</p>
-                <p className="text-xs text-gray-500">{ev.location} · {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                {ev.description && <p className="text-xs text-gray-600 mt-1">{ev.description}</p>}
-                <button onClick={async () => {
-                  await supabase.from('event_rsvps').insert({ event_id: ev.id, member_id: user.id });
-                  alert('RSVP confirmed!');
-                }} className="mt-2 px-3 py-1 rounded-xl text-white text-xs font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>RSVP</button>
+                <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 19 }}>{ev.title}</p>
+                <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{ev.location} · {d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                {ev.description && <p className="text-xs text-gray-500 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{ev.description}</p>}
+                {ev.media_url && <MediaDisplay url={ev.media_url} type={ev.media_type || 'image'} />}
+                <LuxBtn color={color} onClick={async () => { await supabase.from('event_rsvps').insert({ event_id: ev.id, member_id: user.id }); alert('RSVP confirmed!'); }} style={{ marginTop: 10, fontSize: 12, padding: '7px 16px' }}>
+                  RSVP
+                </LuxBtn>
               </div>
             </div>
           );
@@ -2182,73 +3428,62 @@ function BusinessDirectoryScreen({ user, onBack }: { user: User; onBack: () => v
   const [listings, setListings] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ business_name: '', category: '', description: '', phone: '', website: '' });
-  const cats = ['Food & Restaurant','Health & Wellness','Home Services','Professional Services','Beauty & Personal Care','Technology','Education','Other'];
+  const color = user.church.primaryColor;
+  const cats = ['Food & Restaurant', 'Health & Wellness', 'Home Services', 'Professional Services', 'Beauty & Personal Care', 'Technology', 'Education', 'Other'];
 
   async function load() {
     const { data } = await supabase.from('business_listings').select('*')
       .eq('church_id', user.church.id).eq('approved', true).order('created_at', { ascending: false });
     if (data) setListings(data);
   }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-          <h2 className="font-bold text-gray-800 text-lg">Business Directory</h2>
-        </div>
-        <button onClick={() => setAddOpen(!addOpen)}
-          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: user.church.primaryColor }}>+ List</button>
+        <BackHeader title="Business Directory" onBack={onBack} color={color} />
+        <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px', marginRight: 4 }}>+ List</LuxBtn>
       </div>
+
       {addOpen && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <input type="text" placeholder="Business name" value={form.business_name}
-            onChange={e => setForm({ ...form, business_name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <input type="text" placeholder="Business name" value={form.business_name} onChange={e => setForm({ ...form, business_name: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={{ ...inputStyle, marginBottom: 10, cursor: 'pointer' }}>
             <option value="">Select category</option>
             {cats.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <textarea placeholder="Description" value={form.description}
-            onChange={e => setForm({ ...form, description: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-          <input type="text" placeholder="Phone (optional)" value={form.phone}
-            onChange={e => setForm({ ...form, phone: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <input type="text" placeholder="Website (optional)" value={form.website}
-            onChange={e => setForm({ ...form, website: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          <textarea placeholder="Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={{ ...inputStyle, minHeight: 80, resize: 'vertical', marginBottom: 10 }} />
+          <input type="text" placeholder="Phone (optional)" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <input type="text" placeholder="Website (optional)" value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} style={{ ...inputStyle, marginBottom: 12 }} />
           <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={async () => {
+            <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+            <LuxBtn color={color} onClick={async () => {
               if (!form.business_name) return;
               await supabase.from('business_listings').insert({ ...form, church_id: user.church.id, member_id: user.id, approved: false });
               alert('Submitted for review!');
               setAddOpen(false); setForm({ business_name: '', category: '', description: '', phone: '', website: '' });
-            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Submit</button>
+            }} style={{ flex: 1, fontSize: 13 }}>Submit</LuxBtn>
           </div>
         </div>
       )}
-      <div className="space-y-3">
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         {listings.length === 0 ? (
-          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <p className="text-gray-400 text-sm">No listings yet.</p>
-          </div>
+          <EmptyState icon="🏢" message="No listings yet. Be the first to add your business." />
         ) : listings.map((l, i) => (
-          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-            <p className="font-bold text-gray-800">{l.business_name}</p>
-            <span className="text-xs px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: BRAND.sage }}>{l.category}</span>
-            {l.description && <p className="text-gray-600 text-sm mt-2">{l.description}</p>}
-            <div className="flex gap-3 mt-2">
-              {l.phone && <a href={`tel:${l.phone}`} className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>📞 Call</a>}
-              {l.website && <a href={l.website} target="_blank" rel="noreferrer" className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>🌐 Website</a>}
+          <div key={i} className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 10px ${color}06` }}>
+            <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 19 }}>{l.business_name}</p>
+            <span className="text-xs px-2.5 py-1 rounded-full text-white font-semibold inline-block mt-1" style={{ background: BRAND.sage, fontFamily: "'DM Sans', sans-serif" }}>{l.category}</span>
+            {l.description && <p className="text-gray-500 text-sm mt-2 leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif" }}>{l.description}</p>}
+            <div className="flex gap-4 mt-3 pt-2" style={{ borderTop: `1px solid ${color}10` }}>
+              {l.phone && <a href={`tel:${l.phone}`} className="text-xs font-semibold" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>📞 Call</a>}
+              {l.website && <a href={l.website} target="_blank" rel="noreferrer" className="text-xs font-semibold" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>🌐 Website</a>}
             </div>
           </div>
         ))}
@@ -2261,6 +3496,7 @@ function BusinessDirectoryScreen({ user, onBack }: { user: User; onBack: () => v
 function MemberDirectoryScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [members, setMembers] = useState<any[]>([]);
   const [q, setQ] = useState('');
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
@@ -2274,30 +3510,30 @@ function MemberDirectoryScreen({ user, onBack }: { user: User; onBack: () => voi
   const filtered = members.filter(m => (m.full_name || '').toLowerCase().includes(q.toLowerCase()));
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Member Directory</h2>
-      </div>
-      <input type="text" placeholder="Search members..." value={q}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Member Directory" onBack={onBack} color={color} />
+      <input
+        type="text"
+        placeholder="Search members..."
+        value={q}
         onChange={e => setQ(e.target.value)}
-        className="w-full px-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none bg-white" />
-      <div className="space-y-2">
+        className="w-full px-4 py-3 rounded-2xl text-sm focus:outline-none"
+        style={{ border: `1.5px solid ${color}20`, background: BRAND.white, fontFamily: "'DM Sans', sans-serif" }}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {filtered.length === 0 ? (
-          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <p className="text-gray-400 text-sm">No members in directory yet.</p>
-          </div>
+          <EmptyState icon="👤" message="No members in directory yet." />
         ) : filtered.map((m, i) => (
-          <div key={i} className="bg-white rounded-2xl p-3 shadow-sm flex items-center gap-3">
-            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={44} color={user.church.primaryColor} />
+          <div key={i} className="rounded-2xl p-3 flex items-center gap-3" style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 8px ${color}06` }}>
+            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={42} color={color} />
             <div className="flex-1">
-              <p className="font-semibold text-gray-800 text-sm">{m.full_name}</p>
-              <p className="text-xs text-gray-500 capitalize">{(m.role || '').replace('_', ' ')}</p>
-              {m.bio && <p className="text-xs text-gray-400 mt-0.5 line-clamp-1">{m.bio}</p>}
+              <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.full_name}</p>
+              <p className="text-xs text-gray-400 capitalize mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{(m.role || '').replace(/_/g, ' ')}</p>
+              {m.bio && <p className="text-xs text-gray-300 mt-0.5 line-clamp-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.bio}</p>}
             </div>
             <div className="text-right flex-shrink-0">
-              <p className="text-xs font-bold" style={{ color: user.church.primaryColor }}>{m.points || 0} pts</p>
-              <p className="text-xs text-gray-400">{m.streak || 0}d streak</p>
+              <p className="text-xs font-bold" style={{ color, fontFamily: "'Cormorant Garamond', serif", fontSize: 16 }}>{m.points || 0}</p>
+              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>pts</p>
             </div>
           </div>
         ))}
@@ -2313,7 +3549,9 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
   const [addOpen, setAddOpen] = useState(false);
   const [filter, setFilter] = useState('All');
   const [form, setForm] = useState({ title: '', body: '', category: 'General' });
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const [mediaAttach, setMediaAttach] = useState<{ url: string; type: string } | null>(null);
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
   const categories = ['All', 'General', 'Event', 'Volunteer', 'Prayer', 'Lost and Found'];
 
   async function load() {
@@ -2322,98 +3560,123 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
       .eq('church_id', user.church.id).eq('approved', true)
       .order('pinned', { ascending: false }).order('created_at', { ascending: false });
     if (data) setAnns(data);
-    if (isAdmin) {
+    if (isAdminUser) {
       const { data: p } = await supabase.from('announcements')
         .select('*, profiles(full_name)')
         .eq('church_id', user.church.id).eq('approved', false)
         .order('created_at', { ascending: false });
       if (p) setPending(p);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [user.church.id]);
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="space-y-4">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-          <h2 className="font-bold text-gray-800 text-lg">Announcements</h2>
-        </div>
-        <button onClick={() => setAddOpen(!addOpen)}
-          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: user.church.primaryColor }}>+ Post</button>
+        <BackHeader title="Announcements" onBack={onBack} color={color} />
+        <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px', marginRight: 4 }}>+ Post</LuxBtn>
       </div>
+
       {addOpen && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <input type="text" placeholder="Title" value={form.title}
-            onChange={e => setForm({ ...form, title: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-            {['General','Event','Volunteer','Prayer','Lost and Found'].map(c => <option key={c} value={c}>{c}</option>)}
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <input type="text" placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ ...inputStyle, marginBottom: 10 }} />
+          <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} style={{ ...inputStyle, marginBottom: 10, cursor: 'pointer' }}>
+            {['General', 'Event', 'Volunteer', 'Prayer', 'Lost and Found'].map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <textarea placeholder="Details (optional)" value={form.body}
-            onChange={e => setForm({ ...form, body: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
-          <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={async () => {
+          <textarea placeholder="Details (optional)" value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} style={{ ...inputStyle, minHeight: 80, resize: 'vertical', marginBottom: 10 }} />
+          {mediaAttach && (
+            <div className="mb-3">
+              <MediaDisplay url={mediaAttach.url} type={mediaAttach.type} />
+              <button onClick={() => setMediaAttach(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
+            </div>
+          )}
+          <MediaPicker folder="announcements" onUpload={(url, type) => setMediaAttach({ url, type })} />
+          <div className="flex gap-2 mt-3">
+            <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+            <LuxBtn color={color} onClick={async () => {
               if (!form.title) return;
               await supabase.from('announcements').insert({
                 ...form, church_id: user.church.id, author_id: user.id,
-                approved: isAdmin, pinned: false,
+                approved: isAdminUser, pinned: false,
+                media_url: mediaAttach?.url || null, media_type: mediaAttach?.type || null,
               });
-              alert(isAdmin ? 'Posted!' : 'Submitted for review!');
-              setAddOpen(false); setForm({ title: '', body: '', category: 'General' }); load();
-            }} className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Submit</button>
+              alert(isAdminUser ? 'Posted!' : 'Submitted for review!');
+              setAddOpen(false); setForm({ title: '', body: '', category: 'General' }); setMediaAttach(null); load();
+            }} style={{ flex: 1, fontSize: 13 }}>Submit</LuxBtn>
           </div>
         </div>
       )}
-      {isAdmin && pending.length > 0 && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <h3 className="font-bold text-amber-600 mb-3">Pending Review ({pending.length})</h3>
+
+      {isAdminUser && pending.length > 0 && (
+        <div className="rounded-3xl p-4" style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
+          <p className="font-bold text-amber-600 mb-3" style={{ fontFamily: "'DM Sans', sans-serif" }}>Pending Review ({pending.length})</p>
           {pending.map((a, i) => (
-            <div key={i} className="p-3 rounded-xl bg-amber-50 border border-amber-200 mb-2">
-              <p className="font-semibold text-gray-800 text-sm">{a.title}</p>
-              <p className="text-xs text-gray-500 mb-2">by {a.profiles?.full_name}</p>
+            <div key={i} className="p-3 rounded-2xl bg-white border border-amber-100 mb-2">
+              <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{a.title}</p>
+              <p className="text-xs text-gray-400 mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>by {a.profiles?.full_name}</p>
               <div className="flex gap-2">
-                <button onClick={async () => { await supabase.from('announcements').update({ approved: true }).eq('id', a.id); load(); }}
-                  className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
-                <button onClick={async () => { await supabase.from('announcements').delete().eq('id', a.id); load(); }}
-                  className="px-3 py-1 rounded-xl bg-red-100 text-red-700 text-xs font-semibold">Decline</button>
+                <LuxBtn color={color} onClick={async () => { await supabase.from('announcements').update({ approved: true }).eq('id', a.id); load(); }} style={{ fontSize: 12, padding: '6px 14px' }}>Approve</LuxBtn>
+                <LuxBtn color="#ef4444" variant="ghost" onClick={async () => { await supabase.from('announcements').delete().eq('id', a.id); load(); }} style={{ fontSize: 12, padding: '6px 14px' }}>Decline</LuxBtn>
               </div>
             </div>
           ))}
         </div>
       )}
-      <div className="flex gap-1 overflow-x-auto pb-1">
+
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
         {categories.map(c => (
-          <button key={c} onClick={() => setFilter(c)}
+          <button
+            key={c}
+            onClick={() => setFilter(c)}
             className="flex-shrink-0 px-3 py-1.5 rounded-xl text-xs font-semibold"
-            style={{ backgroundColor: filter === c ? user.church.primaryColor : BRAND.white, color: filter === c ? BRAND.white : '#6B7280' }}>
+            style={{
+              background: filter === c ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+              color: filter === c ? BRAND.white : color,
+              border: 'none', cursor: 'pointer',
+              fontFamily: "'DM Sans', sans-serif",
+              transition: 'all 0.2s',
+            }}
+          >
             {c}
           </button>
         ))}
       </div>
-      <div className="space-y-3">
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {anns.filter(a => filter === 'All' || a.category === filter).map((a, i) => (
-          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border-l-4"
-            style={{ borderColor: a.pinned ? user.church.primaryColor : 'transparent' }}>
+          <div
+            key={i}
+            className="rounded-3xl p-4"
+            style={{
+              background: BRAND.white,
+              border: `1px solid ${color}12`,
+              borderLeft: a.pinned ? `4px solid ${color}` : `1px solid ${color}12`,
+              boxShadow: `0 2px 10px ${color}06`,
+            }}
+          >
             <div className="flex justify-between items-start mb-1">
-              <span className="text-xs px-2 py-0.5 rounded-full text-white"
-                style={{ backgroundColor: BRAND.sage }}>{a.category}</span>
-              {isAdmin && (
-                <button onClick={async () => { await supabase.from('announcements').update({ pinned: !a.pinned }).eq('id', a.id); load(); }}
-                  className="text-xs text-gray-400">{a.pinned ? 'Unpin' : 'Pin'}</button>
+              <span className="text-xs px-2.5 py-1 rounded-full text-white font-semibold" style={{ background: BRAND.sage, fontFamily: "'DM Sans', sans-serif" }}>{a.category}</span>
+              {isAdminUser && (
+                <button
+                  onClick={async () => { await supabase.from('announcements').update({ pinned: !a.pinned }).eq('id', a.id); load(); }}
+                  className="text-xs text-gray-400"
+                  style={{ fontFamily: "'DM Sans', sans-serif" }}
+                >
+                  {a.pinned ? 'Unpin' : 'Pin'}
+                </button>
               )}
             </div>
-            <p className="font-bold text-gray-800 mt-1">{a.pinned ? '📌 ' : ''}{a.title}</p>
-            {a.body && <p className="text-gray-600 text-sm mt-1">{a.body}</p>}
+            <p className="font-bold text-gray-800 mt-1" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18 }}>
+              {a.pinned ? '📌 ' : ''}{a.title}
+            </p>
+            {a.body && <p className="text-gray-500 text-sm mt-1 leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif" }}>{a.body}</p>}
+            {a.media_url && <MediaDisplay url={a.media_url} type={a.media_type || 'image'} />}
           </div>
         ))}
       </div>
@@ -2425,6 +3688,7 @@ function AnnouncementsScreen({ user, onBack }: { user: User; onBack: () => void 
 function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [done, setDone] = useState(false);
   const [type, setType] = useState<'in-person' | 'livestream'>('in-person');
+  const color = user.church.primaryColor;
 
   async function checkIn() {
     const now = new Date();
@@ -2433,120 +3697,91 @@ function CheckInScreen({ user, onBack }: { user: User; onBack: () => void }) {
       const currentTime = now.getHours() * 60 + now.getMinutes();
       const [startH, startM] = ch.checkin_start.split(':').map(Number);
       const [endH, endM] = ch.checkin_end.split(':').map(Number);
-      const startMins = startH * 60 + startM;
-      const endMins = endH * 60 + endM;
-      if (currentTime < startMins || currentTime > endMins) {
+      if (currentTime < startH * 60 + startM || currentTime > endH * 60 + endM) {
         alert(`Check in is only available between ${ch.checkin_start} and ${ch.checkin_end}.`);
         return;
       }
       if (ch.checkin_days) {
         const today = now.toLocaleDateString('en-US', { weekday: 'long' });
-        const allowedDays = ch.checkin_days.split(',').map((d: string) => d.trim());
-        if (!allowedDays.includes(today)) {
+        if (!ch.checkin_days.split(',').map((d: string) => d.trim()).includes(today)) {
           alert(`Check in is only available on ${ch.checkin_days}.`);
           return;
         }
       }
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const { data: existing } = await supabase
-      .from('attendance')
-      .select('id')
-      .eq('church_id', user.church.id)
-      .eq('member_id', user.id)
-      .gte('checked_in_at', today.toISOString())
-      .maybeSingle();
-
-    if (existing) {
-      alert('You have already checked in today!');
-      setDone(true);
-      return;
-    }
-
-    await supabase.from('attendance').insert({
-      church_id: user.church.id, member_id: user.id, check_in_type: type,
-    });
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const { data: existing } = await supabase.from('attendance').select('id').eq('church_id', user.church.id).eq('member_id', user.id).gte('checked_in_at', today.toISOString()).maybeSingle();
+    if (existing) { alert('You have already checked in today!'); setDone(true); return; }
+    await supabase.from('attendance').insert({ church_id: user.church.id, member_id: user.id, check_in_type: type });
     await supabase.from('profiles').update({ points: user.points + 25, streak: user.streak + 1 }).eq('id', user.id);
     setDone(true);
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Check In</h2>
-      </div>
-      <div className="bg-white rounded-2xl p-6 shadow-sm text-center">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Check In" onBack={onBack} color={color} />
+      <div className="rounded-3xl p-6 text-center" style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}>
         <div className="flex justify-center mb-4">
-          <FloremusLogo size={60} variant="noTagline" />
+          <FloremusLogo size={56} variant="noTagline" />
         </div>
-        <h3 className="font-bold text-gray-800 text-xl mb-2">{user.church.name}</h3>
-        <p className="text-gray-500 text-sm mb-4">Check in to earn points and keep your streak going</p>
-        <div className="flex flex-col items-center mb-4">
-          <div id="qr-code" className="p-4 bg-white rounded-2xl border border-gray-100">
-            <QRCodeSVG value={`${window.location.origin}`} size={140} fgColor={user.church.primaryColor} />
-          </div>
-          <p className="text-xs text-gray-400 mt-2 mb-3">Scan to open Floremus on your device</p>
-          <div className="flex gap-2">
-            <button onClick={() => {
-              const svg = document.getElementById('qr-code')?.querySelector('svg');
-              if (!svg) return;
-              const data = new XMLSerializer().serializeToString(svg);
-              const blob = new Blob([data], { type: 'image/svg+xml' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'floremus-checkin-qr.svg';
-              a.click();
-            }} className="px-4 py-2 rounded-xl text-white text-xs font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              Download QR
-            </button>
-            <button onClick={() => {
-              const printWindow = window.open('', '_blank');
-              if (!printWindow) return;
-              const svg = document.getElementById('qr-code')?.querySelector('svg');
-              if (!svg) return;
-              printWindow.document.write(`
-                <html><head><title>Check In QR Code - ${user.church.name}</title></head>
-                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;text-align:center;">
-                  <h2 style="margin-bottom:16px;">${user.church.name}</h2>
-                  <p style="margin-bottom:24px;color:#666;">Scan to check in with Floremus</p>
-                  ${svg.outerHTML}
-                  <p style="margin-top:24px;color:#999;font-size:12px;">floremus.church</p>
-                </body></html>
-              `);
-              printWindow.document.close();
-              printWindow.print();
-            }} className="px-4 py-2 rounded-xl text-xs font-semibold border"
-              style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
-              Print QR
-            </button>
+        <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 700, color: '#111', marginBottom: 6 }}>{user.church.name}</h3>
+        <p className="text-gray-400 text-sm mb-5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Check in to earn points and keep your streak going</p>
+
+        <div className="flex justify-center mb-4">
+          <div className="p-4 rounded-2xl" style={{ border: `1px solid ${color}15` }}>
+            <QRCodeSVG value={`${window.location.origin}`} size={140} fgColor={color} />
           </div>
         </div>
+        <p className="text-xs text-gray-400 mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>Scan to open Floremus on your device</p>
+
+        <div className="flex gap-2 mb-4 justify-center">
+          <LuxBtn color={color} variant="ghost" onClick={() => {
+            const svg = document.querySelector('svg');
+            if (!svg) return;
+            const data = new XMLSerializer().serializeToString(svg);
+            const blob = new Blob([data], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = 'floremus-checkin-qr.svg'; a.click();
+          }} style={{ fontSize: 13 }}>Download QR</LuxBtn>
+          <LuxBtn color={color} variant="outline" onClick={() => {
+            const win = window.open('', '_blank');
+            const svg = document.querySelector('svg');
+            if (!win || !svg) return;
+            win.document.write(`<html><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;text-align:center;"><h2>${user.church.name}</h2><p style="color:#666;margin-bottom:24px;">Scan to check in with Floremus</p>${svg.outerHTML}<p style="margin-top:24px;color:#999;font-size:12px;">floremus.church</p></body></html>`);
+            win.document.close(); win.print();
+          }} style={{ fontSize: 13 }}>Print QR</LuxBtn>
+        </div>
+
         {done ? (
-          <div>
-            <p className="text-4xl mb-2">✅</p>
-            <p className="font-bold text-green-600 text-xl">Checked In!</p>
-            <p className="text-gray-500 text-sm mt-1">+25 points earned</p>
+          <div className="py-4">
+            <p style={{ fontSize: 48, marginBottom: 8 }}>✅</p>
+            <p className="font-bold text-green-500 text-xl" style={{ fontFamily: "'Cormorant Garamond', serif" }}>Checked In!</p>
+            <p className="text-gray-400 text-sm mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>+25 points earned</p>
           </div>
         ) : (
           <>
-            <div className="flex gap-2 mb-6">
+            <div className="flex gap-2 mb-5">
               {(['in-person', 'livestream'] as const).map(t => (
-                <button key={t} onClick={() => setType(t)}
-                  className="flex-1 py-3 rounded-xl font-semibold text-sm"
-                  style={{ backgroundColor: type === t ? user.church.primaryColor : '#F3F4F6', color: type === t ? BRAND.white : '#6B7280' }}>
+                <button
+                  key={t}
+                  onClick={() => setType(t)}
+                  className="flex-1 py-3 rounded-2xl font-semibold text-sm"
+                  style={{
+                    background: type === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+                    color: type === t ? BRAND.white : color,
+                    border: 'none', cursor: 'pointer',
+                    fontFamily: "'DM Sans', sans-serif",
+                    boxShadow: type === t ? `0 4px 12px ${color}30` : 'none',
+                    transition: 'all 0.2s',
+                  }}
+                >
                   {t === 'in-person' ? '🏛️ In Person' : '📺 Livestream'}
                 </button>
               ))}
             </div>
-            <button onClick={checkIn}
-              className="w-full py-4 rounded-xl text-white font-bold text-lg"
-              style={{ backgroundColor: user.church.primaryColor }}>
+            <LuxBtn color={color} onClick={checkIn} style={{ width: '100%', fontSize: 15, padding: '15px 0' }}>
               Check In Now (+25 pts)
-            </button>
+            </LuxBtn>
           </>
         )}
       </div>
@@ -2563,8 +3798,17 @@ function ChildrenCheckInScreen({ user, onBack }: { user: User; onBack: () => voi
   const [lookup, setLookup] = useState('');
   const [found, setFound] = useState<any>(null);
   const [log, setLog] = useState<any[]>([]);
-  const isWorker = user.role === 'super_admin' || user.role === 'admin' || user.role === 'children_worker';
-  const rooms = ['Nursery (0-2)','Toddlers (2-3)','Pre-K (4-5)','K-2nd Grade','3rd-5th Grade'];
+  const isWorker = isChildrenWorker(user);
+  const isAdminUser = isAdmin(user);
+  const canManage = isWorker || isAdminUser;
+  const color = user.church.primaryColor;
+  const rooms = ['Nursery (0-2)', 'Toddlers (2-3)', 'Pre-K (4-5)', 'K-2nd Grade', '3rd-5th Grade'];
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
 
   async function checkInChild() {
     if (!form.child_name.trim()) { alert("Enter the child's name"); return; }
@@ -2581,64 +3825,65 @@ function ChildrenCheckInScreen({ user, onBack }: { user: User; onBack: () => voi
 
   async function verifyCode() {
     if (!lookup.trim()) return;
-    const { data } = await supabase.from('children_checkin').select('*')
-      .eq('pickup_code', lookup.toUpperCase()).is('checked_out_at', null).maybeSingle();
+    const { data } = await supabase.from('children_checkin').select('*').eq('pickup_code', lookup.toUpperCase()).is('checked_out_at', null).maybeSingle();
     setFound(data || null);
     if (!data) alert('No active check-in found for this code');
   }
 
   async function checkout(id: string, name: string) {
-    await supabase.from('children_checkin').update({
-      checked_out_at: new Date().toISOString(), checked_out_by: user.name || user.email,
-    }).eq('id', id);
+    await supabase.from('children_checkin').update({ checked_out_at: new Date().toISOString(), checked_out_by: user.name || user.email }).eq('id', id);
     alert(`${name} has been checked out.`);
     setFound(null); setLookup('');
   }
 
   async function loadLog() {
-    const { data } = await supabase.from('children_checkin').select('*')
-      .eq('church_id', user.church.id).order('checked_in_at', { ascending: false }).limit(20);
+    const { data } = await supabase.from('children_checkin').select('*').eq('church_id', user.church.id).order('checked_in_at', { ascending: false }).limit(20);
     if (data) setLog(data);
   }
 
-  const tabList = ['checkin', 'pickup', ...(isWorker ? ['audit log'] : [])];
+  const tabList = ['checkin', 'pickup', ...(canManage ? ['audit log'] : [])];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Children's Check-In</h2>
-      </div>
-      <div className="flex gap-1 overflow-x-auto pb-1">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Children's Check-In" onBack={onBack} color={color} />
+
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
         {tabList.map(t => (
-          <button key={t} onClick={() => { setTab(t); if (t === 'audit log') loadLog(); }}
-            className="flex-shrink-0 px-3 py-2 rounded-xl text-sm font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+          <button
+            key={t}
+            onClick={() => { setTab(t); if (t === 'audit log') loadLog(); }}
+            className="flex-shrink-0 px-4 py-2 rounded-2xl text-sm font-semibold capitalize"
+            style={{
+              background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`,
+              color: tab === t ? BRAND.white : color,
+              border: 'none', cursor: 'pointer',
+              fontFamily: "'DM Sans', sans-serif",
+              transition: 'all 0.2s',
+            }}
+          >
             {t}
           </button>
         ))}
       </div>
 
       {tab === 'checkin' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
           {result ? (
             <div className="text-center py-4">
-              <p className="text-5xl mb-3">✅</p>
-              <h3 className="font-bold text-gray-800 text-xl">{result.child_name}</h3>
-              <p className="text-gray-500 text-sm">Room: {result.room}</p>
-              <div className="mt-4 p-4 rounded-2xl" style={{ backgroundColor: '#F5F0FF' }}>
-                <p className="text-xs text-gray-500 mb-1">PICKUP CODE</p>
-                <p className="text-4xl font-bold tracking-widest" style={{ color: user.church.primaryColor }}>{code}</p>
-                <p className="text-xs text-gray-400 mt-1">Valid for today's service only</p>
+              <p style={{ fontSize: 52, marginBottom: 12 }}>✅</p>
+              <h3 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 26, fontWeight: 700, color: '#111' }}>{result.child_name}</h3>
+              <p className="text-gray-400 text-sm mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Room: {result.room}</p>
+              <div className="mt-5 p-5 rounded-2xl" style={{ background: `${color}0d`, border: `1px solid ${color}20` }}>
+                <p className="text-xs text-gray-400 mb-2" style={{ fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>Pickup Code</p>
+                <p className="font-bold tracking-widest" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 40, color, letterSpacing: 8 }}>{code}</p>
+                <p className="text-xs text-gray-400 mt-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Valid for today's service only</p>
               </div>
-              <button onClick={() => {
-                setResult(null); setCode('');
-                setForm({ child_name: '', room: '', allergy_info: '', medical_info: '', authorized_pickups: '', custody_flag: false });
-              }} className="mt-4 w-full py-3 rounded-xl text-white font-bold"
-                style={{ backgroundColor: user.church.primaryColor }}>Check In Another</button>
+              <LuxBtn color={color} onClick={() => { setResult(null); setCode(''); setForm({ child_name: '', room: '', allergy_info: '', medical_info: '', authorized_pickups: '', custody_flag: false }); }} style={{ width: '100%', marginTop: 16 }}>
+                Check In Another
+              </LuxBtn>
             </div>
           ) : (
-            <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {[
                 { label: "Child's Name", key: 'child_name', ph: 'First and last name' },
                 { label: 'Allergy Information', key: 'allergy_info', ph: 'List allergies or none' },
@@ -2646,96 +3891,90 @@ function ChildrenCheckInScreen({ user, onBack }: { user: User; onBack: () => voi
                 { label: 'Authorized Pickups', key: 'authorized_pickups', ph: 'Names separated by commas' },
               ].map((f, i) => (
                 <div key={i}>
-                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.label}</label>
-                  <input type="text" placeholder={f.ph} value={(form as any)[f.key]}
-                    onChange={e => setForm({ ...form, [f.key]: e.target.value })}
-                    className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+                  <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.label}</label>
+                  <input type="text" placeholder={f.ph} value={(form as any)[f.key]} onChange={e => setForm({ ...form, [f.key]: e.target.value })} style={inputStyle} />
                 </div>
               ))}
               <div>
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Room</label>
-                <select value={form.room} onChange={e => setForm({ ...form, room: e.target.value })}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Room</label>
+                <select value={form.room} onChange={e => setForm({ ...form, room: e.target.value })} style={{ ...inputStyle, cursor: 'pointer' }}>
                   <option value="">Select room</option>
                   {rooms.map(r => <option key={r} value={r}>{r}</option>)}
                 </select>
               </div>
-              <label className="flex items-center gap-3 p-3 rounded-xl bg-red-50 border border-red-200 cursor-pointer">
-                <input type="checkbox" checked={form.custody_flag}
-                  onChange={e => setForm({ ...form, custody_flag: e.target.checked })} className="rounded" />
+              <label className="flex items-center gap-3 p-4 rounded-2xl cursor-pointer" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+                <input type="checkbox" checked={form.custody_flag} onChange={e => setForm({ ...form, custody_flag: e.target.checked })} className="rounded" />
                 <div>
-                  <p className="font-semibold text-red-700 text-sm">Custody Alert</p>
-                  <p className="text-xs text-red-500">Flag for custody restrictions</p>
+                  <p className="font-semibold text-red-700 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>Custody Alert</p>
+                  <p className="text-xs text-red-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Flag for custody restrictions</p>
                 </div>
               </label>
-              <button onClick={checkInChild}
-                className="w-full py-4 rounded-xl text-white font-bold text-lg"
-                style={{ backgroundColor: user.church.primaryColor }}>
+              <LuxBtn color={color} onClick={checkInChild} style={{ width: '100%', fontSize: 15 }}>
                 Check In and Generate Code
-              </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === 'pickup' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <p className="text-gray-500 text-sm">Enter the pickup code to verify and release a child.</p>
-          <div className="flex gap-2">
-            <input type="text" placeholder="PICKUP CODE" value={lookup}
-              onChange={e => setLookup(e.target.value.toUpperCase())}
-              className="flex-1 px-3 py-3 border border-gray-200 rounded-xl text-center font-bold tracking-widest text-lg uppercase focus:outline-none" />
-            <button onClick={verifyCode}
-              className="px-4 py-3 rounded-xl text-white font-bold"
-              style={{ backgroundColor: user.church.primaryColor }}>Verify</button>
-          </div>
-          {found && (
-            <div className="p-4 rounded-2xl border-2"
-              style={{ borderColor: found.custody_flag ? '#EF4444' : '#4ade80' }}>
-              {found.custody_flag && (
-                <div className="mb-3 p-3 rounded-xl bg-red-50 border border-red-200">
-                  <p className="font-bold text-red-700">⚠️ CUSTODY ALERT</p>
-                  <p className="text-sm text-red-600">Contact pastor or admin before releasing this child.</p>
-                </div>
-              )}
-              {found.allergy_info && found.allergy_info !== 'none' && (
-                <div className="mb-3 p-3 rounded-xl bg-orange-50 border border-orange-200">
-                  <p className="font-bold text-orange-700">🚨 ALLERGY: {found.allergy_info}</p>
-                </div>
-              )}
-              <p className="font-bold text-gray-800 text-xl">{found.child_name}</p>
-              <p className="text-gray-500 text-sm">Room: {found.room}</p>
-              <p className="text-gray-500 text-sm">In: {new Date(found.checked_in_at).toLocaleTimeString()}</p>
-              {found.authorized_pickups?.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-xs font-semibold text-gray-500">AUTHORIZED PICKUPS:</p>
-                  <p className="text-sm text-gray-700">{found.authorized_pickups.join(', ')}</p>
-                </div>
-              )}
-              <button onClick={() => checkout(found.id, found.child_name)}
-                className="w-full mt-4 py-3 rounded-xl text-white font-bold"
-                style={{ backgroundColor: found.custody_flag ? '#EF4444' : user.church.primaryColor }}>
-                {found.custody_flag ? 'Contact Admin Before Releasing' : 'Confirm Pickup'}
-              </button>
+              </LuxBtn>
             </div>
           )}
         </div>
       )}
 
-      {tab === 'audit log' && isWorker && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2">
-          <h3 className="font-bold text-gray-800 mb-2">Audit Log</h3>
-          {log.map((e, i) => (
-            <div key={i} className="p-3 rounded-xl border border-gray-100 text-sm">
-              <div className="flex justify-between">
-                <p className="font-semibold text-gray-800">{e.child_name}</p>
-                {e.custody_flag && <span className="text-red-500 text-xs font-bold">CUSTODY</span>}
-              </div>
-              <p className="text-xs text-gray-500">Room: {e.room}</p>
-              <p className="text-xs text-gray-500">In: {new Date(e.checked_in_at).toLocaleString()}</p>
-              {e.checked_out_at && (
-                <p className="text-xs text-green-600">Out: {new Date(e.checked_out_at).toLocaleString()} by {e.checked_out_by}</p>
+      {tab === 'pickup' && (
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <p className="text-gray-400 text-sm mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>Enter the pickup code to verify and release a child.</p>
+          <div className="flex gap-2 mb-4">
+            <input
+              type="text" placeholder="PICKUP CODE" value={lookup}
+              onChange={e => setLookup(e.target.value.toUpperCase())}
+              className="flex-1 px-4 py-3 text-center font-bold tracking-widest text-lg uppercase focus:outline-none rounded-2xl"
+              style={{ border: `1.5px solid ${color}25`, background: `${color}06`, fontFamily: "'Cormorant Garamond', serif" }}
+            />
+            <LuxBtn color={color} onClick={verifyCode} style={{ padding: '12px 20px' }}>Verify</LuxBtn>
+          </div>
+          {found && (
+            <div className="p-5 rounded-2xl" style={{ border: `2px solid ${found.custody_flag ? '#ef4444' : '#4ade80'}` }}>
+              {found.custody_flag && (
+                <div className="mb-3 p-3 rounded-xl" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+                  <p className="font-bold text-red-700" style={{ fontFamily: "'DM Sans', sans-serif" }}>⚠️ CUSTODY ALERT</p>
+                  <p className="text-sm text-red-500 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Contact pastor or admin before releasing this child.</p>
+                </div>
               )}
+              {found.allergy_info && found.allergy_info !== 'none' && (
+                <div className="mb-3 p-3 rounded-xl" style={{ background: '#fff7ed', border: '1px solid #fed7aa' }}>
+                  <p className="font-bold text-orange-700" style={{ fontFamily: "'DM Sans', sans-serif" }}>🚨 ALLERGY: {found.allergy_info}</p>
+                </div>
+              )}
+              <p className="font-bold text-gray-800 text-xl" style={{ fontFamily: "'Cormorant Garamond', serif" }}>{found.child_name}</p>
+              <p className="text-gray-400 text-sm mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Room: {found.room}</p>
+              <p className="text-gray-400 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>In: {new Date(found.checked_in_at).toLocaleTimeString()}</p>
+              {found.authorized_pickups?.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest" style={{ fontFamily: "'DM Sans', sans-serif" }}>Authorized Pickups</p>
+                  <p className="text-sm text-gray-700 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{found.authorized_pickups.join(', ')}</p>
+                </div>
+              )}
+              <LuxBtn
+                color={found.custody_flag ? '#ef4444' : color}
+                onClick={() => checkout(found.id, found.child_name)}
+                style={{ width: '100%', marginTop: 16 }}
+              >
+                {found.custody_flag ? 'Contact Admin Before Releasing' : 'Confirm Pickup'}
+              </LuxBtn>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'audit log' && canManage && (
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <SectionLabel color={color}>Audit Log</SectionLabel>
+          {log.map((e, i) => (
+            <div key={i} className="p-3 rounded-2xl mb-2" style={{ border: `1px solid ${color}12` }}>
+              <div className="flex justify-between">
+                <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{e.child_name}</p>
+                {e.custody_flag && <span className="text-red-500 text-xs font-bold" style={{ fontFamily: "'DM Sans', sans-serif" }}>CUSTODY</span>}
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Room: {e.room}</p>
+              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>In: {new Date(e.checked_in_at).toLocaleString()}</p>
+              {e.checked_out_at && <p className="text-xs text-green-500 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Out: {new Date(e.checked_out_at).toLocaleString()} by {e.checked_out_by}</p>}
             </div>
           ))}
         </div>
@@ -2749,11 +3988,13 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [name, setName] = useState(user.name || '');
   const [bio, setBio] = useState(user.bio || '');
   const [phone, setPhone] = useState(user.phone || '');
-  const [birthday, setBirthday] = useState((user as any).birthday || '');
+  const [birthday, setBirthday] = useState(user.birthday || '');
   const [optIn, setOptIn] = useState(user.directoryOptIn || false);
   const [avatar, setAvatar] = useState(user.avatarUrl || '');
   const [uploading, setUploading] = useState(false);
+  const [toast, setToast] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const color = user.church.primaryColor;
 
   async function uploadAvatar(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -2771,203 +4012,171 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
   }
 
   async function save() {
-    await supabase.from('profiles').update({
-      full_name: name, bio, phone, directory_opt_in: optIn, birthday: birthday || null,
-    }).eq('id', user.id);
-    alert('Profile saved!');
+    await supabase.from('profiles').update({ full_name: name, bio, phone, directory_opt_in: optIn, birthday: birthday || null }).eq('id', user.id);
+    setToast('Profile saved!');
   }
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">My Profile</h2>
-      </div>
-      <div className="bg-white rounded-2xl p-6 shadow-sm">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {toast && <Toast message={toast} color={color} onClose={() => setToast('')} />}
+      <BackHeader title="My Profile" onBack={onBack} color={color} />
+
+      <div className="rounded-3xl p-6" style={{ background: BRAND.white, border: `1px solid ${color}15`, boxShadow: `0 2px 16px ${color}08` }}>
         <div className="flex flex-col items-center mb-6">
           <div className="relative">
-            <Avatar url={avatar} name={name || user.email} size={80} color={user.church.primaryColor} />
-            <button onClick={() => fileRef.current?.click()}
-              className="absolute bottom-0 right-0 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {uploading ? '…' : '📷'}
+            <Avatar url={avatar} name={name || user.email} size={70} color={color} />
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="absolute bottom-0 right-0 flex items-center justify-center rounded-full text-white"
+              style={{ width: 28, height: 28, background: `linear-gradient(135deg, ${color}, ${color}cc)`, border: `2px solid white`, fontSize: 12 }}
+            >
+              {uploading ? '⏳' : '📷'}
             </button>
           </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={uploadAvatar} />
-          <p className="text-xs text-gray-400 mt-2">Tap camera to upload photo (optional)</p>
+          <p className="text-xs text-gray-400 mt-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Tap to upload photo</p>
         </div>
-        <div className="space-y-3">
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Full Name</label>
-            <input type="text" value={name} onChange={e => setName(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Full Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</label>
-            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Phone</label>
+            <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} style={inputStyle} />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Birthday</label>
-            <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Birthday</label>
+            <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} style={inputStyle} />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Bio</label>
-            <textarea value={bio} onChange={e => setBio(e.target.value)}
-              placeholder="Tell your church community about yourself..."
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-20 resize-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Bio</label>
+            <textarea value={bio} onChange={e => setBio(e.target.value)} placeholder="Tell your church community about yourself..." style={{ ...inputStyle, minHeight: 80, resize: 'vertical' }} />
           </div>
-          <label className="flex items-center gap-3 p-3 rounded-xl border border-gray-200 cursor-pointer">
+          <label className="flex items-center gap-3 p-4 rounded-2xl cursor-pointer" style={{ border: `1px solid ${color}20`, background: `${color}06` }}>
             <input type="checkbox" checked={optIn} onChange={e => setOptIn(e.target.checked)} className="rounded" />
             <div>
-              <p className="font-semibold text-gray-700 text-sm">Appear in Member Directory</p>
-              <p className="text-xs text-gray-400">Let other members find you</p>
+              <p className="font-semibold text-gray-700 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>Appear in Member Directory</p>
+              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Let other members find you</p>
             </div>
           </label>
-          <button onClick={save}
-            className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor }}>
-            Save Profile
-          </button>
+          <LuxBtn color={color} onClick={save} style={{ width: '100%' }}>Save Profile</LuxBtn>
         </div>
-        <div className="mt-4 space-y-2">
-          {[
-            { l: 'Points', v: user.points.toLocaleString() },
-            { l: 'Streak', v: `${user.streak} days 🔥` },
-            { l: 'Role', v: user.role.replace(/_/g, ' ') },
-          ].map((s, i) => (
-            <div key={i} className="flex justify-between p-3 rounded-xl bg-gray-50">
-              <span className="text-sm text-gray-600">{s.l}</span>
-              <span className="font-bold text-gray-800 capitalize">{s.v}</span>
-            </div>
-          ))}
+
+        <div className="mt-5 pt-4" style={{ borderTop: `1px solid ${color}10` }}>
+          <div className="flex gap-3">
+            <StatPill icon="⭐" value={user.points.toLocaleString()} label="Points" color={color} />
+            <StatPill icon="🔥" value={`${user.streak}d`} label="Streak" color={color} />
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+// ── Invite Generator ───────────────────────────────────────────────────────
 function InviteGenerator({ user }: { user: User }) {
   const [inviteLink, setInviteLink] = useState('');
   const [generating, setGenerating] = useState(false);
+  const color = user.church.primaryColor;
 
   async function generateInvite() {
     setGenerating(true);
     const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-    await supabase.from('invites').insert({
-      church_id: user.church.id,
-      code,
-      created_by: user.id,
-      active: true,
-    });
-    const link = `${window.location.origin}/join/${code}`;
-    setInviteLink(link);
+    await supabase.from('invites').insert({ church_id: user.church.id, code, created_by: user.id, active: true });
+    setInviteLink(`${window.location.origin}/join/${code}`);
     setGenerating(false);
   }
 
-  async function copyLink() {
-    await navigator.clipboard.writeText(inviteLink);
-    alert('Invite link copied!');
-  }
-
   return (
-    <div className="bg-white rounded-2xl p-4 shadow-sm">
-      <h3 className="font-bold text-gray-800 mb-1">Invite Members</h3>
-      <p className="text-gray-500 text-xs mb-3">Generate a link to share with your congregation. Anyone with the link can join your church.</p>
+    <div className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+      <SectionLabel color={color}>Invite Members</SectionLabel>
+      <p className="text-gray-400 text-xs mb-3" style={{ fontFamily: "'DM Sans', sans-serif" }}>Generate a unique link to share with your congregation.</p>
       {inviteLink ? (
-        <div className="space-y-2">
-          <div className="p-3 rounded-xl bg-gray-50 border border-gray-200">
-            <p className="text-xs text-gray-500 break-all">{inviteLink}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="p-3 rounded-2xl" style={{ background: `${color}08`, border: `1px solid ${color}15` }}>
+            <p className="text-xs text-gray-500 break-all" style={{ fontFamily: "'DM Sans', sans-serif" }}>{inviteLink}</p>
           </div>
           <div className="flex gap-2">
-            <button onClick={copyLink}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              Copy Link
-            </button>
-            <button onClick={() => setInviteLink('')}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">
-              Generate New
-            </button>
+            <LuxBtn color={color} onClick={async () => { await navigator.clipboard.writeText(inviteLink); alert('Copied!'); }} style={{ flex: 1, fontSize: 13 }}>Copy Link</LuxBtn>
+            <LuxBtn color={color} variant="outline" onClick={() => setInviteLink('')} style={{ flex: 1, fontSize: 13 }}>Generate New</LuxBtn>
           </div>
         </div>
       ) : (
-        <button onClick={generateInvite} disabled={generating}
-          className="w-full py-3 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: user.church.primaryColor, opacity: generating ? 0.7 : 1 }}>
+        <LuxBtn color={color} onClick={generateInvite} disabled={generating} style={{ width: '100%' }}>
           {generating ? 'Generating...' : 'Generate Invite Link'}
-        </button>
+        </LuxBtn>
       )}
     </div>
   );
 }
+
+// ── Notification Sender ────────────────────────────────────────────────────
 function NotificationSender({ user }: { user: User }) {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  const color = user.church.primaryColor;
 
-async function sendNotification() {
+  async function sendNotification() {
     if (!title || !message) { alert('Please enter a title and message'); return; }
     setSending(true);
     try {
       const response = await fetch('https://cjnzizyxjoqmmnksfitd.supabase.co/functions/v1/send-notification', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          app_id: 'ff657d60-a65d-4ec7-aa26-ccdd92ec81bb',
-          title,
-          message,
-        }),
+        body: JSON.stringify({ app_id: 'ff657d60-a65d-4ec7-aa26-ccdd92ec81bb', title, message }),
       });
       const data = await response.json();
-      if (data.id) {
-        setSent(true);
-        setTitle('');
-        setMessage('');
-        setTimeout(() => setSent(false), 3000);
-      } else {
-        alert('Failed to send. Please try again.');
-      }
-    } catch {
-      alert('Failed to send notification.');
-    }
+      if (data.id) { setSent(true); setTitle(''); setMessage(''); setTimeout(() => setSent(false), 3000); }
+      else { alert('Failed to send. Please try again.'); }
+    } catch { alert('Failed to send notification.'); }
     setSending(false);
   }
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
   return (
-    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-      <h3 className="font-bold text-gray-800">Send Push Notification</h3>
-      <p className="text-gray-500 text-xs">Send a push notification to all subscribed members instantly.</p>
+    <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+      <SectionLabel color={color}>Send Push Notification</SectionLabel>
+      <p className="text-gray-400 text-xs mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>Send a push notification to all subscribed members instantly.</p>
       {sent ? (
         <div className="text-center py-6">
-          <p className="text-3xl mb-2">✅</p>
-          <p className="font-bold text-green-600">Notification sent!</p>
+          <p style={{ fontSize: 44, marginBottom: 8 }}>✅</p>
+          <p className="font-bold text-green-500" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22 }}>Notification sent!</p>
         </div>
       ) : (
-        <>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
-            <input type="text" placeholder="e.g. Service starts in 30 minutes" value={title}
-              onChange={e => setTitle(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Title</label>
+            <input type="text" placeholder="e.g. Service starts in 30 minutes" value={title} onChange={e => setTitle(e.target.value)} style={inputStyle} />
           </div>
           <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Message</label>
-            <textarea placeholder="Type your message here..." value={message}
-              onChange={e => setMessage(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-24 resize-none" />
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Message</label>
+            <textarea placeholder="Type your message here..." value={message} onChange={e => setMessage(e.target.value)} style={{ ...inputStyle, minHeight: 96, resize: 'vertical' }} />
           </div>
-          <button onClick={sendNotification} disabled={sending}
-            className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor, opacity: sending ? 0.7 : 1 }}>
+          <LuxBtn color={color} onClick={sendNotification} disabled={sending} style={{ width: '100%' }}>
             {sending ? 'Sending...' : 'Send to All Members'}
-          </button>
-        </>
+          </LuxBtn>
+        </div>
       )}
     </div>
   );
 }
+
+// ── Group Manager ──────────────────────────────────────────────────────────
 function GroupManager({ user }: { user: User }) {
   const [groups, setGroups] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -2977,14 +4186,14 @@ function GroupManager({ user }: { user: User }) {
   const [description, setDescription] = useState('');
   const [leaderId, setLeaderId] = useState('');
   const [leaderId2, setLeaderId2] = useState('');
+  const color = user.church.primaryColor;
 
   async function load() {
     const { data: g } = await supabase.from('groups')
       .select('*, profiles!groups_leader_id_fkey(full_name), leader2:profiles!groups_leader_id_2_fkey(full_name)')
       .eq('church_id', user.church.id).order('created_at', { ascending: false });
     if (g) setGroups(g);
-    const { data: m } = await supabase.from('profiles').select('id, full_name')
-      .eq('church_id', user.church.id).order('full_name', { ascending: true });
+    const { data: m } = await supabase.from('profiles').select('id, full_name').eq('church_id', user.church.id).order('full_name', { ascending: true });
     if (m) setMembers(m);
     const { data: r } = await supabase.from('group_join_requests')
       .select('*, profiles(full_name, avatar_url), groups(name)')
@@ -2997,110 +4206,77 @@ function GroupManager({ user }: { user: User }) {
 
   async function createGroup() {
     if (!name.trim()) return;
-    await supabase.from('groups').insert({
-      church_id: user.church.id,
-      name,
-      description,
-      leader_id: leaderId || null,
-      leader_id_2: leaderId2 || null,
-      member_count: 0,
-    });
+    await supabase.from('groups').insert({ church_id: user.church.id, name, description, leader_id: leaderId || null, leader_id_2: leaderId2 || null, member_count: 0 });
     setName(''); setDescription(''); setLeaderId(''); setLeaderId2(''); setAddOpen(false); load();
   }
 
-  async function deleteGroup(id: string) {
-    if (!window.confirm('Delete this group?')) return;
-    await supabase.from('groups').delete().eq('id', id);
-    load();
-  }
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
 
   return (
-    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="font-bold text-gray-800">Small Groups</h3>
-        <button onClick={() => setAddOpen(!addOpen)}
-          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: user.church.primaryColor }}>+ Add Group</button>
+    <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+      <div className="flex justify-between items-center mb-4">
+        <SectionLabel color={color}>Small Groups</SectionLabel>
+        <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px' }}>+ Add Group</LuxBtn>
       </div>
+
       {addOpen && (
-        <div className="p-3 rounded-xl border border-gray-200 space-y-3">
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Group Name</label>
-            <input type="text" placeholder="e.g. Men's Bible Study" value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Description (optional)</label>
-            <textarea placeholder="What is this group about?" value={description}
-              onChange={e => setDescription(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-16 resize-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Leader 1</label>
-            <select value={leaderId} onChange={e => setLeaderId(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-              <option value="">Select a leader</option>
+        <div className="p-4 rounded-2xl mb-4" style={{ border: `1px solid ${color}20`, background: `${color}06` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input type="text" placeholder="Group name" value={name} onChange={e => setName(e.target.value)} style={inputStyle} />
+            <textarea placeholder="Description (optional)" value={description} onChange={e => setDescription(e.target.value)} style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} />
+            <select value={leaderId} onChange={e => setLeaderId(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+              <option value="">Select Leader 1</option>
               {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Leader 2 (optional)</label>
-            <select value={leaderId2} onChange={e => setLeaderId2(e.target.value)}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-              <option value="">Select a second leader</option>
+            <select value={leaderId2} onChange={e => setLeaderId2(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+              <option value="">Select Leader 2 (optional)</option>
               {members.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
             </select>
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={createGroup}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Create Group</button>
+            <div className="flex gap-2">
+              <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+              <LuxBtn color={color} onClick={createGroup} style={{ flex: 1, fontSize: 13 }}>Create Group</LuxBtn>
+            </div>
           </div>
         </div>
       )}
-      
+
       {requests.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Pending Join Requests ({requests.length})</p>
+        <div className="mb-4">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Pending Join Requests ({requests.length})</p>
           {requests.map((r, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-xl bg-gray-50">
+            <div key={i} className="flex items-center justify-between p-3 rounded-2xl mb-2" style={{ background: `${color}08` }}>
               <div className="flex items-center gap-2">
-                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={32} color={user.church.primaryColor} />
+                <Avatar url={r.profiles?.avatar_url} name={r.profiles?.full_name || 'Member'} size={30} color={color} />
                 <div>
-                  <p className="font-semibold text-gray-800 text-sm">{r.profiles?.full_name || 'Member'}</p>
-                  <p className="text-xs text-gray-500">Wants to join {r.groups?.name}</p>
+                  <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{r.profiles?.full_name || 'Member'}</p>
+                  <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Wants to join {r.groups?.name}</p>
                 </div>
               </div>
               <div className="flex gap-2">
-                <button onClick={async () => {
-                  await supabase.from('group_join_requests').update({ status: 'approved' }).eq('id', r.id);
-                  await supabase.from('group_members').insert({ group_id: r.group_id, member_id: r.member_id });
-                  load();
-                }} className="px-2 py-1 rounded-lg text-white text-xs font-semibold"
-                  style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
-                <button onClick={async () => {
-                  await supabase.from('group_join_requests').update({ status: 'denied' }).eq('id', r.id);
-                  load();
-                }} className="px-2 py-1 rounded-lg bg-red-100 text-red-700 text-xs font-semibold">Deny</button>
+                <LuxBtn color={color} onClick={async () => { await supabase.from('group_join_requests').update({ status: 'approved' }).eq('id', r.id); await supabase.from('group_members').insert({ group_id: r.group_id, member_id: r.member_id }); load(); }} style={{ padding: '6px 12px', fontSize: 12 }}>Approve</LuxBtn>
+                <LuxBtn color="#ef4444" variant="ghost" onClick={async () => { await supabase.from('group_join_requests').update({ status: 'denied' }).eq('id', r.id); load(); }} style={{ padding: '6px 12px', fontSize: 12 }}>Deny</LuxBtn>
               </div>
             </div>
           ))}
         </div>
       )}
-      <div className="space-y-2">
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {groups.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-4">No groups yet. Create your first one.</p>
+          <EmptyState icon="👥" message="No groups yet. Create your first one." />
         ) : groups.map((g, i) => (
-          <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
+          <div key={i} className="flex items-center justify-between p-3 rounded-2xl" style={{ border: `1px solid ${color}12` }}>
             <div>
-              <p className="font-semibold text-gray-800 text-sm">{g.name}</p>
-<p className="text-xs text-gray-500">Leader 1: {g.profiles?.full_name || 'None'} · Leader 2: {g.leader2?.full_name || 'None'}</p>              {g.description && <p className="text-xs text-gray-400 mt-0.5">{g.description}</p>}
+              <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{g.name}</p>
+              <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                Leader 1: {g.profiles?.full_name || 'None'} · Leader 2: {g.leader2?.full_name || 'None'}
+              </p>
             </div>
-            <button onClick={() => deleteGroup(g.id)}
-              className="text-xs text-red-400 font-semibold">Delete</button>
+            <LuxBtn color="#ef4444" variant="ghost" onClick={async () => { if (!window.confirm('Delete this group?')) return; await supabase.from('groups').delete().eq('id', g.id); load(); }} style={{ padding: '6px 12px', fontSize: 12 }}>Delete</LuxBtn>
           </div>
         ))}
       </div>
@@ -3108,266 +4284,175 @@ function GroupManager({ user }: { user: User }) {
   );
 }
 
+// ── Challenge Manager ──────────────────────────────────────────────────────
 function ChallengeManager({ user }: { user: User }) {
   const [challenges, setChallenges] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ title: '', description: '', type: 'Streak', points: '100', total_days: '7' });
+  const [mediaAttach, setMediaAttach] = useState<{ url: string; type: string } | null>(null);
+  const color = user.church.primaryColor;
 
   async function load() {
-    const { data } = await supabase.from('challenges').select('*')
-      .eq('church_id', user.church.id).order('created_at', { ascending: false });
+    const { data } = await supabase.from('challenges').select('*').eq('church_id', user.church.id).order('created_at', { ascending: false });
     if (data) setChallenges(data);
   }
-
   useEffect(() => { load(); }, [user.church.id]);
 
-  async function createChallenge() {
-    if (!form.title.trim()) return;
-    await supabase.from('challenges').insert({
-      church_id: user.church.id,
-      title: form.title,
-      description: form.description,
-      type: form.type,
-      points: parseInt(form.points),
-      total_days: parseInt(form.total_days),
-      is_active: true,
-    });
-    setForm({ title: '', description: '', type: 'Streak', points: '100', total_days: '7' });
-    setAddOpen(false); load();
-  }
-
-  async function toggleChallenge(id: string, isActive: boolean) {
-    await supabase.from('challenges').update({ is_active: !isActive }).eq('id', id);
-    load();
-  }
-
-  async function deleteChallenge(id: string) {
-    if (!window.confirm('Delete this challenge?')) return;
-    await supabase.from('challenges').delete().eq('id', id);
-    load();
-  }
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
 
   return (
-    <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-      <div className="flex justify-between items-center">
-        <h3 className="font-bold text-gray-800">Challenges</h3>
-        <button onClick={() => setAddOpen(!addOpen)}
-          className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-          style={{ backgroundColor: user.church.primaryColor }}>+ Add Challenge</button>
+    <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+      <div className="flex justify-between items-center mb-4">
+        <SectionLabel color={color}>Challenges</SectionLabel>
+        <LuxBtn color={color} variant="ghost" onClick={() => setAddOpen(!addOpen)} style={{ fontSize: 12, padding: '7px 14px' }}>+ Add Challenge</LuxBtn>
       </div>
+
       {addOpen && (
-        <div className="p-3 rounded-xl border border-gray-200 space-y-3">
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
-            <input type="text" placeholder="e.g. 7 Day Prayer Challenge" value={form.title}
-              onChange={e => setForm({ ...form, title: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Description</label>
-            <textarea placeholder="Describe the challenge..." value={form.description}
-              onChange={e => setForm({ ...form, description: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-16 resize-none" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Type</label>
-              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-                <option value="Streak">Streak</option>
-                <option value="Achievement">Achievement</option>
-                <option value="Community">Community</option>
+        <div className="p-4 rounded-2xl mb-4" style={{ border: `1px solid ${color}20`, background: `${color}06` }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input type="text" placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={inputStyle} />
+            <textarea placeholder="Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} style={{ ...inputStyle, minHeight: 64, resize: 'vertical' }} />
+            <div className="flex gap-2">
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={{ ...inputStyle, flex: 1, cursor: 'pointer' }}>
+                {['Streak', 'Achievement', 'Community'].map(t => <option key={t} value={t}>{t}</option>)}
               </select>
+              <input type="number" placeholder="Points" value={form.points} onChange={e => setForm({ ...form, points: e.target.value })} style={{ ...inputStyle, flex: 1 }} />
             </div>
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Points</label>
-              <input type="number" value={form.points}
-                onChange={e => setForm({ ...form, points: e.target.value })}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            {form.type === 'Streak' && (
+              <input type="number" placeholder="Duration (days)" value={form.total_days} onChange={e => setForm({ ...form, total_days: e.target.value })} style={inputStyle} />
+            )}
+            {mediaAttach && (
+              <div>
+                <MediaDisplay url={mediaAttach.url} type={mediaAttach.type} />
+                <button onClick={() => setMediaAttach(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
+              </div>
+            )}
+            <MediaPicker folder="challenges" onUpload={(url, type) => setMediaAttach({ url, type })} />
+            <div className="flex gap-2">
+              <LuxBtn color={color} variant="outline" onClick={() => setAddOpen(false)} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+              <LuxBtn color={color} onClick={async () => {
+                if (!form.title.trim()) return;
+                await supabase.from('challenges').insert({
+                  church_id: user.church.id, title: form.title, description: form.description,
+                  type: form.type, points: parseInt(form.points), total_days: parseInt(form.total_days), is_active: true,
+                  media_url: mediaAttach?.url || null, media_type: mediaAttach?.type || null,
+                });
+                setForm({ title: '', description: '', type: 'Streak', points: '100', total_days: '7' }); setMediaAttach(null); setAddOpen(false); load();
+              }} style={{ flex: 1, fontSize: 13 }}>Create</LuxBtn>
             </div>
-          </div>
-          {form.type === 'Streak' && (
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Duration (days)</label>
-              <input type="number" value={form.total_days}
-                onChange={e => setForm({ ...form, total_days: e.target.value })}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button onClick={() => setAddOpen(false)}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={createChallenge}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>Create Challenge</button>
           </div>
         </div>
       )}
-      <div className="space-y-2">
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {challenges.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-4">No challenges yet. Create your first one.</p>
+          <EmptyState icon="⚡" message="No challenges yet. Create your first one." />
         ) : challenges.map((c, i) => (
-          <div key={i} className="p-3 rounded-xl border border-gray-100">
+          <div key={i} className="p-3 rounded-2xl" style={{ border: `1px solid ${color}12` }}>
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-semibold text-gray-800 text-sm">{c.title}</p>
+                <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{c.title}</p>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs px-2 py-0.5 rounded-full text-white"
-                    style={{ backgroundColor: user.church.primaryColor }}>{c.type}</span>
-                  <span className="text-xs text-gray-500">{c.points} pts</span>
-                  {c.total_days && <span className="text-xs text-gray-500">{c.total_days} days</span>}
+                  <span className="text-xs px-2 py-0.5 rounded-full text-white font-semibold" style={{ background: color, fontFamily: "'DM Sans', sans-serif" }}>{c.type}</span>
+                  <span className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{c.points} pts</span>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button onClick={() => toggleChallenge(c.id, c.is_active)}
-                  className="text-xs px-2 py-1 rounded-lg"
-                  style={{ backgroundColor: c.is_active ? '#F0FFF4' : '#FFF5F5', color: c.is_active ? '#166534' : '#991B1B' }}>
+                <button onClick={async () => { await supabase.from('challenges').update({ is_active: !c.is_active }).eq('id', c.id); load(); }}
+                  className="text-xs px-2 py-1.5 rounded-xl font-semibold"
+                  style={{ background: c.is_active ? '#f0fdf4' : '#fef2f2', color: c.is_active ? '#166534' : '#991b1b', fontFamily: "'DM Sans', sans-serif" }}>
                   {c.is_active ? 'Active' : 'Inactive'}
                 </button>
-                <button onClick={() => deleteChallenge(c.id)}
-                  className="text-xs text-red-400 font-semibold">Delete</button>
+                <LuxBtn color="#ef4444" variant="ghost" onClick={async () => { if (!window.confirm('Delete?')) return; await supabase.from('challenges').delete().eq('id', c.id); load(); }} style={{ padding: '5px 10px', fontSize: 12 }}>Delete</LuxBtn>
               </div>
             </div>
-            {c.description && <p className="text-xs text-gray-400 mt-1">{c.description}</p>}
           </div>
         ))}
       </div>
     </div>
   );
 }
+
+// ── Devotional Manager ─────────────────────────────────────────────────────
 function DevotionalManager({ user }: { user: User }) {
   const [devotionals, setDevotionals] = useState<any[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const color = user.church.primaryColor;
 
   async function load() {
-    const { data } = await supabase.from('devotionals').select('*')
-      .eq('church_id', user.church.id)
-      .order('created_at', { ascending: false }).limit(20);
+    const { data } = await supabase.from('devotionals').select('*').eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(20);
     if (data) setDevotionals(data);
   }
-
   useEffect(() => { load(); }, [user.church.id]);
 
   async function save() {
     if (!form.title.trim() || !form.body.trim()) { alert('Title and body are required'); return; }
     if (editingId) {
-      await supabase.from('devotionals').update({
-        day_of_week: form.day_of_week,
-        title: form.title,
-        scripture: form.scripture,
-        body: form.body,
-        reflection: form.reflection,
-      }).eq('id', editingId);
+      await supabase.from('devotionals').update({ day_of_week: form.day_of_week, title: form.title, scripture: form.scripture, body: form.body, reflection: form.reflection }).eq('id', editingId);
     } else {
-      await supabase.from('devotionals').insert({
-        church_id: user.church.id,
-        author_id: user.id,
-        day_of_week: form.day_of_week,
-        title: form.title,
-        scripture: form.scripture,
-        body: form.body,
-        reflection: form.reflection,
-      });
+      await supabase.from('devotionals').insert({ church_id: user.church.id, author_id: user.id, day_of_week: form.day_of_week, title: form.title, scripture: form.scripture, body: form.body, reflection: form.reflection });
     }
     setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' });
-    setAddOpen(false);
-    setEditingId(null);
-    load();
+    setAddOpen(false); setEditingId(null); load();
   }
 
-  function startEdit(dv: any) {
-    setForm({ day_of_week: dv.day_of_week, title: dv.title, scripture: dv.scripture || '', body: dv.body, reflection: dv.reflection || '' });
-    setEditingId(dv.id);
-    setAddOpen(true);
-  }
-
-  async function remove(id: string) {
-    if (!window.confirm('Delete this devotional?')) return;
-    await supabase.from('devotionals').delete().eq('id', id);
-    load();
-  }
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl p-4 shadow-sm">
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
         <div className="flex justify-between items-center mb-1">
-          <h3 className="font-bold text-gray-800">Devotionals</h3>
-          <button onClick={() => { setAddOpen(!addOpen); setEditingId(null); setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' }); }}
-            className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-            style={{ backgroundColor: user.church.primaryColor }}>+ Add</button>
+          <SectionLabel color={color}>Devotionals</SectionLabel>
+          <LuxBtn color={color} variant="ghost" onClick={() => { setAddOpen(!addOpen); setEditingId(null); setForm({ day_of_week: 'Monday', title: '', scripture: '', body: '', reflection: '' }); }} style={{ fontSize: 12, padding: '7px 14px' }}>+ Add</LuxBtn>
         </div>
-        <p className="text-xs text-gray-400">Post devotionals directly without using the AI assistant.</p>
+        <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Post devotionals directly without using the AI assistant.</p>
       </div>
 
       {addOpen && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-3">
-          <h4 className="font-bold text-gray-800 text-sm">{editingId ? 'Edit Devotional' : 'New Devotional'}</h4>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Day of Week</label>
-            <select value={form.day_of_week} onChange={e => setForm({ ...form, day_of_week: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <p className="font-bold text-gray-800 mb-3" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>{editingId ? 'Edit Devotional' : 'New Devotional'}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <select value={form.day_of_week} onChange={e => setForm({ ...form, day_of_week: e.target.value })} style={{ ...inputStyle, cursor: 'pointer' }}>
               {days.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</label>
-            <input type="text" placeholder="Devotional title" value={form.title}
-              onChange={e => setForm({ ...form, title: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Scripture</label>
-            <input type="text" placeholder="e.g. John 3:16" value={form.scripture}
-              onChange={e => setForm({ ...form, scripture: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Body</label>
-            <textarea placeholder="Write the devotional content..." value={form.body}
-              onChange={e => setForm({ ...form, body: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none h-32 resize-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Reflection Question (optional)</label>
-            <input type="text" placeholder="e.g. How will you apply this today?" value={form.reflection}
-              onChange={e => setForm({ ...form, reflection: e.target.value })}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div className="flex gap-2">
-            <button onClick={() => { setAddOpen(false); setEditingId(null); }}
-              className="flex-1 py-2 rounded-xl border text-sm font-semibold text-gray-500">Cancel</button>
-            <button onClick={save}
-              className="flex-1 py-2 rounded-xl text-white text-sm font-semibold"
-              style={{ backgroundColor: user.church.primaryColor }}>
-              {editingId ? 'Save Changes' : 'Post Devotional'}
-            </button>
+            <input type="text" placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={inputStyle} />
+            <input type="text" placeholder="Scripture (e.g. John 3:16)" value={form.scripture} onChange={e => setForm({ ...form, scripture: e.target.value })} style={inputStyle} />
+            <textarea placeholder="Devotional content..." value={form.body} onChange={e => setForm({ ...form, body: e.target.value })} style={{ ...inputStyle, minHeight: 120, resize: 'vertical' }} />
+            <input type="text" placeholder="Reflection question (optional)" value={form.reflection} onChange={e => setForm({ ...form, reflection: e.target.value })} style={inputStyle} />
+            <div className="flex gap-2">
+              <LuxBtn color={color} variant="outline" onClick={() => { setAddOpen(false); setEditingId(null); }} style={{ flex: 1, fontSize: 13 }}>Cancel</LuxBtn>
+              <LuxBtn color={color} onClick={save} style={{ flex: 1, fontSize: 13 }}>{editingId ? 'Save Changes' : 'Post Devotional'}</LuxBtn>
+            </div>
           </div>
         </div>
       )}
 
-      <div className="space-y-3">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {devotionals.length === 0 ? (
-          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <p className="text-gray-400 text-sm">No devotionals posted yet.</p>
-          </div>
+          <EmptyState icon="📖" message="No devotionals posted yet." />
         ) : devotionals.map((dv, i) => (
-          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
+          <div key={i} className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}12` }}>
             <div className="flex justify-between items-start">
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs px-2 py-0.5 rounded-full text-white font-semibold"
-                    style={{ backgroundColor: user.church.primaryColor }}>{dv.day_of_week}</span>
-                </div>
-                <p className="font-bold text-gray-800 text-sm">{dv.title}</p>
-                {dv.scripture && <p className="text-xs text-gray-500 mt-0.5 italic">{dv.scripture}</p>}
-                <p className="text-gray-600 text-xs mt-1 line-clamp-2">{dv.body}</p>
+                <span className="text-xs px-2.5 py-1 rounded-full text-white font-semibold inline-block mb-1.5" style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, fontFamily: "'DM Sans', sans-serif" }}>{dv.day_of_week}</span>
+                <p className="font-bold text-gray-800 text-sm" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18 }}>{dv.title}</p>
+                {dv.scripture && <p className="text-xs text-gray-400 mt-0.5 italic" style={{ fontFamily: "'DM Sans', sans-serif" }}>{dv.scripture}</p>}
+                <p className="text-gray-500 text-xs mt-1 line-clamp-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>{dv.body}</p>
               </div>
-              <div className="flex gap-3 ml-3">
-                <button onClick={() => startEdit(dv)} className="text-xs font-semibold" style={{ color: user.church.primaryColor }}>Edit</button>
-                <button onClick={() => remove(dv.id)} className="text-xs text-red-400 font-semibold">Delete</button>
+              <div className="flex gap-2 ml-3">
+                <button onClick={() => { setForm({ day_of_week: dv.day_of_week, title: dv.title, scripture: dv.scripture || '', body: dv.body, reflection: dv.reflection || '' }); setEditingId(dv.id); setAddOpen(true); }} className="text-xs font-semibold" style={{ color, fontFamily: "'DM Sans', sans-serif", background: 'none', border: 'none', cursor: 'pointer' }}>Edit</button>
+                <button onClick={async () => { if (!window.confirm('Delete?')) return; await supabase.from('devotionals').delete().eq('id', dv.id); load(); }} className="text-xs text-red-400 font-semibold" style={{ fontFamily: "'DM Sans', sans-serif", background: 'none', border: 'none', cursor: 'pointer' }}>Delete</button>
               </div>
             </div>
           </div>
@@ -3377,16 +4462,16 @@ function DevotionalManager({ user }: { user: User }) {
   );
 }
 
+// ── Published Content Viewer ───────────────────────────────────────────────
 function PublishedContentViewer({ user }: { user: User }) {
   const [draft, setDraft] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState('');
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('sermon_drafts').select('*')
-        .eq('church_id', user.church.id).eq('status', 'published')
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data } = await supabase.from('sermon_drafts').select('*').eq('church_id', user.church.id).eq('status', 'published').order('created_at', { ascending: false }).limit(1).maybeSingle();
       if (data) setDraft(data);
       setLoading(false);
     })();
@@ -3398,103 +4483,61 @@ function PublishedContentViewer({ user }: { user: User }) {
     setTimeout(() => setCopied(''), 2000);
   }
 
-  if (loading) return <div className="bg-white rounded-2xl p-6 text-center shadow-sm"><p className="text-gray-400 text-sm">Loading...</p></div>;
-  if (!draft) return <div className="bg-white rounded-2xl p-6 text-center shadow-sm"><p className="text-gray-400 text-sm">No published content yet. Generate and publish from the AI Assistant.</p></div>;
+  if (loading) return <div className="rounded-3xl p-6 text-center" style={{ background: BRAND.white }}><p className="text-gray-400 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>Loading...</p></div>;
+  if (!draft) return <EmptyState icon="📝" message="No published content yet. Generate and publish from the AI Assistant." />;
+
+  const contentBlock = (label: string, key: string, text: string) => (
+    <div className="rounded-2xl p-4 mb-3" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+      <div className="flex justify-between items-center mb-2">
+        <p className="text-xs font-bold uppercase tracking-widest" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>{label}</p>
+        <LuxBtn color={copied === key ? '#4ade80' : color} variant="ghost" onClick={() => copy(text, key)} style={{ fontSize: 12, padding: '5px 12px' }}>
+          {copied === key ? 'Copied!' : 'Copy'}
+        </LuxBtn>
+      </div>
+      <p className="text-gray-600 text-sm leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif" }}>{text}</p>
+    </div>
+  );
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-2xl p-4 shadow-sm">
-        <h3 className="font-bold text-gray-800 mb-1">Published Content</h3>
-        <p className="text-xs text-gray-400">Most recent published sermon content. Tap any section to copy.</p>
-      </div>
-
-      {draft.generated_announcement && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <div className="flex justify-between items-center mb-2">
-            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Announcement</p>
-            <button onClick={() => copy(draft.generated_announcement, 'announcement')}
-              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-              style={{ backgroundColor: copied === 'announcement' ? '#4ade80' : user.church.primaryColor }}>
-              {copied === 'announcement' ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <p className="text-gray-700 text-sm leading-relaxed">{draft.generated_announcement}</p>
-        </div>
-      )}
-
-      {draft.generated_prayer && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <div className="flex justify-between items-center mb-2">
-            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Prayer Prompt</p>
-            <button onClick={() => copy(draft.generated_prayer, 'prayer')}
-              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-              style={{ backgroundColor: copied === 'prayer' ? '#4ade80' : user.church.primaryColor }}>
-              {copied === 'prayer' ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <p className="text-gray-700 text-sm leading-relaxed">{draft.generated_prayer}</p>
-        </div>
-      )}
-
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {draft.generated_announcement && contentBlock('Announcement', 'announcement', draft.generated_announcement)}
+      {draft.generated_prayer && contentBlock('Prayer Prompt', 'prayer', draft.generated_prayer)}
       {draft.generated_questions?.length > 0 && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
+        <div className="rounded-2xl p-4 mb-3" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
           <div className="flex justify-between items-center mb-2">
-            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Small Group Questions</p>
-            <button onClick={() => copy(draft.generated_questions.join('\n'), 'questions')}
-              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-              style={{ backgroundColor: copied === 'questions' ? '#4ade80' : user.church.primaryColor }}>
+            <p className="text-xs font-bold uppercase tracking-widest" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>Small Group Questions</p>
+            <LuxBtn color={copied === 'questions' ? '#4ade80' : color} variant="ghost" onClick={() => copy(draft.generated_questions.join('\n'), 'questions')} style={{ fontSize: 12, padding: '5px 12px' }}>
               {copied === 'questions' ? 'Copied!' : 'Copy All'}
-            </button>
+            </LuxBtn>
           </div>
           {draft.generated_questions.map((q: string, i: number) => (
-            <div key={i} className="flex gap-2 mb-2">
-              <span className="text-xs text-gray-400 mt-0.5 flex-shrink-0">{i + 1}.</span>
-              <p className="text-gray-700 text-sm">{q}</p>
+            <div key={i} className="flex gap-2 mb-1.5">
+              <span className="text-xs text-gray-400 mt-0.5 flex-shrink-0" style={{ fontFamily: "'DM Sans', sans-serif" }}>{i + 1}.</span>
+              <p className="text-gray-600 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{q}</p>
             </div>
           ))}
         </div>
       )}
-
       {draft.generated_social && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <p className="text-sm font-bold uppercase tracking-wide mb-3" style={{ color: user.church.primaryColor }}>Social Media Captions</p>
+        <div className="rounded-2xl p-4 mb-3" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <p className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color, fontFamily: "'DM Sans', sans-serif" }}>Social Media Captions</p>
           {Object.entries(draft.generated_social).map(([key, val]) => (
-            <div key={key} className="mb-3 p-3 rounded-xl bg-gray-50">
+            <div key={key} className="mb-3 p-3 rounded-xl" style={{ background: `${color}06` }}>
               <div className="flex justify-between items-center mb-1">
-                <p className="text-xs font-bold text-gray-500 capitalize">{key}</p>
-                <button onClick={() => copy(val as string, key)}
-                  className="text-xs px-2 py-0.5 rounded-lg text-white font-semibold"
-                  style={{ backgroundColor: copied === key ? '#4ade80' : user.church.primaryColor }}>
+                <p className="text-xs font-bold text-gray-500 capitalize" style={{ fontFamily: "'DM Sans', sans-serif" }}>{key}</p>
+                <LuxBtn color={copied === key ? '#4ade80' : color} variant="ghost" onClick={() => copy(val as string, key)} style={{ fontSize: 11, padding: '4px 10px' }}>
                   {copied === key ? 'Copied!' : 'Copy'}
-                </button>
+                </LuxBtn>
               </div>
-              <p className="text-gray-700 text-sm leading-relaxed">{val as string}</p>
+              <p className="text-gray-600 text-sm leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif" }}>{val as string}</p>
             </div>
           ))}
-        </div>
-      )}
-
-      {draft.generated_challenge && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm">
-          <div className="flex justify-between items-center mb-2">
-            <p className="text-sm font-bold uppercase tracking-wide" style={{ color: user.church.primaryColor }}>Weekly Challenge</p>
-            <button onClick={() => copy(`${draft.generated_challenge.title}\n${draft.generated_challenge.description}`, 'challenge')}
-              className="text-xs px-3 py-1 rounded-xl text-white font-semibold"
-              style={{ backgroundColor: copied === 'challenge' ? '#4ade80' : user.church.primaryColor }}>
-              {copied === 'challenge' ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <p className="font-semibold text-gray-800 mb-1">{draft.generated_challenge.title}</p>
-          <p className="text-gray-600 text-sm">{draft.generated_challenge.description}</p>
-          <div className="flex gap-3 mt-2">
-            <span className="text-xs px-2 py-1 rounded-full text-white" style={{ backgroundColor: user.church.primaryColor }}>{draft.generated_challenge.type}</span>
-            <span className="text-xs text-gray-500">{draft.generated_challenge.duration_days} days</span>
-          </div>
         </div>
       )}
     </div>
   );
 }
+
 // ── Admin Screen ───────────────────────────────────────────────────────────
 function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [tab, setTab] = useState('overview');
@@ -3505,47 +4548,43 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [brandColor, setBrandColor] = useState(user.church.primaryColor);
   const [brandInitials, setBrandInitials] = useState(user.church.logoInitials);
   const [logoUrl, setLogoUrl] = useState(user.church.logoUrl || '');
+  const [givingLink, setGivingLink] = useState(user.church.givingStripeLink || '');
   const [checkinStart, setCheckinStart] = useState('08:00');
   const [checkinEnd, setCheckinEnd] = useState('14:00');
   const [checkinDays, setCheckinDays] = useState('Sunday');
   const [autoReset, setAutoReset] = useState(false);
   const [resetFreq, setResetFreq] = useState('monthly');
   const [members, setMembers] = useState<any[]>([]);
+  const [pointsEditing, setPointsEditing] = useState<Record<string, string>>({});
   const fileRef = useRef<HTMLInputElement>(null);
   const isSA = user.role === 'super_admin';
+  const color = user.church.primaryColor;
 
   useEffect(() => {
     (async () => {
-      const { count: mc } = await supabase.from('profiles')
-        .select('*', { count: 'exact', head: true }).eq('church_id', user.church.id);
+      const { count: mc } = await supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('church_id', user.church.id);
       const wk = new Date(Date.now() - 7 * 86400000).toISOString();
-      const { count: ac } = await supabase.from('attendance')
-        .select('*', { count: 'exact', head: true })
-        .eq('church_id', user.church.id).gte('checked_in_at', wk);
+      const { count: ac } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('church_id', user.church.id).gte('checked_in_at', wk);
       const ms = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
-      const { count: atc } = await supabase.from('attendance')
-        .select('*', { count: 'exact', head: true })
-        .eq('church_id', user.church.id).gte('checked_in_at', ms);
+      const { count: atc } = await supabase.from('attendance').select('*', { count: 'exact', head: true }).eq('church_id', user.church.id).gte('checked_in_at', ms);
       setStats({ members: mc || 0, active: ac || 0, attendance: atc || 0 });
 
-      const { data: pl } = await supabase.from('business_listings')
-        .select('*, profiles(full_name)')
-        .eq('church_id', user.church.id).eq('approved', false);
+      const { data: pl } = await supabase.from('business_listings').select('*, profiles(full_name)').eq('church_id', user.church.id).eq('approved', false);
       if (pl) setPendingListings(pl);
 
-      const { data: ps } = await supabase.from('points_settings')
-        .select('*').eq('church_id', user.church.id).maybeSingle();
+      const { data: ps } = await supabase.from('points_settings').select('*').eq('church_id', user.church.id).maybeSingle();
       if (ps) { setAutoReset(ps.auto_reset); setResetFreq(ps.reset_frequency); }
-      const { data: ch } = await supabase.from('churches').select('checkin_start, checkin_end, checkin_days').eq('id', user.church.id).maybeSingle();
+
+      const { data: ch } = await supabase.from('churches').select('checkin_start, checkin_end, checkin_days, giving_stripe_link').eq('id', user.church.id).maybeSingle();
       if (ch) {
         if (ch.checkin_start) setCheckinStart(ch.checkin_start);
         if (ch.checkin_end) setCheckinEnd(ch.checkin_end);
         if (ch.checkin_days) setCheckinDays(ch.checkin_days);
+        if (ch.giving_stripe_link) setGivingLink(ch.giving_stripe_link);
       }
 
       if (isSA) {
-        const { data: mb } = await supabase.from('profiles').select('*')
-          .eq('church_id', user.church.id).order('full_name', { ascending: true });
+        const { data: mb } = await supabase.from('profiles').select('*').eq('church_id', user.church.id).order('full_name', { ascending: true });
         if (mb) setMembers(mb);
       }
     })();
@@ -3563,241 +4602,257 @@ function AdminScreen({ user, onBack }: { user: User; onBack: () => void }) {
     }
   }
 
-const adminTabs = ['overview', 'content', 'devotionals', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Admin Panel</h2>
-      </div>
-      <div className="flex gap-1 overflow-x-auto pb-1">
+  const adminTabs = ['overview', 'content', 'devotionals', 'branding', 'points', 'notifications', 'groups', 'challenges', ...(isSA ? ['members'] : [])];
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', padding: '11px 14px', borderRadius: 12,
+    border: `1.5px solid ${color}20`, background: `${color}06`,
+    fontSize: 14, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Admin Panel" onBack={onBack} color={color} />
+
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
         {adminTabs.map(t => (
-          <button key={t} onClick={() => setTab(t)}
-            className="flex-shrink-0 px-3 py-2 rounded-xl text-xs font-semibold capitalize"
-            style={{ backgroundColor: tab === t ? user.church.primaryColor : BRAND.white, color: tab === t ? BRAND.white : '#6B7280' }}>
+          <button key={t} onClick={() => setTab(t)} className="flex-shrink-0 px-3 py-2 rounded-2xl text-xs font-semibold capitalize"
+            style={{ background: tab === t ? `linear-gradient(135deg, ${color}, ${color}cc)` : `${color}0d`, color: tab === t ? BRAND.white : color, border: 'none', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", transition: 'all 0.2s', boxShadow: tab === t ? `0 4px 12px ${color}30` : 'none' }}>
             {t}
           </button>
         ))}
       </div>
 
       {tab === 'overview' && (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="grid grid-cols-2 gap-3">
-            {[
-              { l: 'Total Members', v: stats.members, icon: '👥' },
-              { l: 'Active This Week', v: stats.active, icon: '⚡' },
-              { l: 'Attendance MTD', v: stats.attendance, icon: '📍' },
-              { l: 'Giving MTD', v: '$0', icon: '💳' },
-            ].map((s, i) => (
-              <div key={i} className="bg-white rounded-2xl p-4 shadow-sm">
-                <p className="text-2xl mb-1">{s.icon}</p>
-                <p className="text-2xl font-bold text-gray-800">{s.v}</p>
-                <p className="text-xs text-gray-500">{s.l}</p>
+            {[{ l: 'Total Members', v: stats.members, icon: '👥' }, { l: 'Active This Week', v: stats.active, icon: '⚡' }, { l: 'Attendance MTD', v: stats.attendance, icon: '📍' }, { l: 'Giving MTD', v: '$0', icon: '💳' }].map((s, i) => (
+              <div key={i} className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 10px ${color}06` }}>
+                <p style={{ fontSize: 28, marginBottom: 4 }}>{s.icon}</p>
+                <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32, fontWeight: 700, color: '#111', lineHeight: 1 }}>{s.v}</p>
+                <p className="text-xs text-gray-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{s.l}</p>
               </div>
             ))}
           </div>
           {pendingListings.length > 0 && (
-            <div className="bg-white rounded-2xl p-4 shadow-sm">
-              <h3 className="font-bold text-gray-800 mb-3">Pending Business Listings</h3>
+            <div className="rounded-3xl p-4" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+              <SectionLabel color={color}>Pending Business Listings</SectionLabel>
               {pendingListings.map((pl, i) => (
-                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl mb-2">
+                <div key={i} className="flex items-center justify-between p-3 rounded-2xl mb-2" style={{ background: `${color}08` }}>
                   <div>
-                    <p className="font-semibold text-gray-800 text-sm">{pl.business_name}</p>
-                    <p className="text-xs text-gray-500">by {pl.profiles?.full_name}</p>
+                    <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{pl.business_name}</p>
+                    <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>by {pl.profiles?.full_name}</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={async () => {
-                      await supabase.from('business_listings').update({ approved: true }).eq('id', pl.id);
-                      setPendingListings(pendingListings.filter(x => x.id !== pl.id));
-                    }} className="px-3 py-1 rounded-xl text-white text-xs font-semibold"
-                      style={{ backgroundColor: user.church.primaryColor }}>Approve</button>
-                    <button onClick={async () => {
-                      await supabase.from('business_listings').delete().eq('id', pl.id);
-                      setPendingListings(pendingListings.filter(x => x.id !== pl.id));
-                    }} className="px-3 py-1 rounded-xl bg-gray-200 text-gray-600 text-xs font-semibold">Decline</button>
+                    <LuxBtn color={color} onClick={async () => { await supabase.from('business_listings').update({ approved: true }).eq('id', pl.id); setPendingListings(pendingListings.filter(x => x.id !== pl.id)); }} style={{ padding: '6px 14px', fontSize: 12 }}>Approve</LuxBtn>
+                    <LuxBtn color="#6b7280" variant="ghost" onClick={async () => { await supabase.from('business_listings').delete().eq('id', pl.id); setPendingListings(pendingListings.filter(x => x.id !== pl.id)); }} style={{ padding: '6px 14px', fontSize: 12 }}>Decline</LuxBtn>
                   </div>
                 </div>
               ))}
             </div>
           )}
           <InviteGenerator user={user} />
-        </div>)}
+        </div>
+      )}
 
       {tab === 'branding' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <h3 className="font-bold text-gray-800">Church Branding</h3>
-          {[
-            { l: 'Church Name', v: brandName, s: setBrandName },
-            { l: 'Tagline', v: brandTagline, s: setBrandTagline },
-          ].map((f, i) => (
-            <div key={i}>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{f.l}</label>
-              <input type="text" value={f.v} onChange={e => f.s(e.target.value)}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <SectionLabel color={color}>Church Branding</SectionLabel>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {[{ l: 'Church Name', v: brandName, s: setBrandName }, { l: 'Tagline', v: brandTagline, s: setBrandTagline }].map((f, i) => (
+              <div key={i}>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f.l}</label>
+                <input type="text" value={f.v} onChange={e => f.s(e.target.value)} style={inputStyle} />
+              </div>
+            ))}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Logo Initials</label>
+              <input type="text" value={brandInitials} maxLength={3} onChange={e => setBrandInitials(e.target.value.toUpperCase())} style={inputStyle} />
             </div>
-          ))}
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Logo Initials</label>
-            <input type="text" value={brandInitials} maxLength={3}
-              onChange={e => setBrandInitials(e.target.value.toUpperCase())}
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Primary Color</label>
-            <div className="flex gap-3 items-center mt-1">
-              <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)}
-                className="w-12 h-10 rounded-lg border border-gray-200 cursor-pointer" />
-              <input type="text" value={brandColor} onChange={e => setBrandColor(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Church Logo (Optional)</label>
-            <div className="flex items-center gap-3 mt-1">
-              {logoUrl && (
-                <img src={logoUrl} alt="logo" className="w-12 h-12 rounded-xl object-contain border border-gray-200" />
-              )}
-              <button onClick={() => fileRef.current?.click()}
-                className="px-4 py-2 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600">
-                Upload Logo
-              </button>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={uploadLogo} />
-            </div>
-            <p className="text-xs text-gray-400 mt-1">Replaces initials if uploaded. PNG or SVG recommended.</p>
-          </div>
-          <div className="p-3 rounded-xl" style={{ backgroundColor: brandColor + '20' }}>
-            <p className="text-xs font-semibold text-gray-500 mb-2">Preview</p>
-            <div className="flex items-center gap-2">
-              <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm"
-                style={{ backgroundColor: brandColor }}>{brandInitials}</div>
-              <div>
-                <p className="font-bold text-gray-800 text-sm">{brandName}</p>
-                <p className="text-xs text-gray-500">{brandTagline}</p>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Primary Color</label>
+              <div className="flex gap-3 items-center">
+                <input type="color" value={brandColor} onChange={e => setBrandColor(e.target.value)} className="w-12 h-10 rounded-xl border cursor-pointer" style={{ borderColor: `${color}20` }} />
+                <input type="text" value={brandColor} onChange={e => setBrandColor(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
               </div>
             </div>
-          </div>
-          <div>
-            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Check In Window</label>
-            <p className="text-xs text-gray-400 mb-2">Members can only check in during this window.</p>
-            <div className="flex gap-2 mb-2">
-              <div className="flex-1">
-                <label className="text-xs text-gray-400">Start Time</label>
-                <input type="time" value={checkinStart} onChange={e => setCheckinStart(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Church Logo (Optional)</label>
+              <div className="flex items-center gap-3">
+                {logoUrl && <img src={logoUrl} alt="logo" className="w-12 h-12 rounded-xl object-contain" style={{ border: `1px solid ${color}20` }} />}
+                <LuxBtn color={color} variant="outline" onClick={() => fileRef.current?.click()} style={{ fontSize: 13 }}>Upload Logo</LuxBtn>
+                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={uploadLogo} />
               </div>
-              <div className="flex-1">
-                <label className="text-xs text-gray-400">End Time</label>
-                <input type="time" value={checkinEnd} onChange={e => setCheckinEnd(e.target.value)}
-                  className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-              </div>
+              <p className="text-xs text-gray-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Replaces initials if uploaded. PNG or SVG recommended.</p>
             </div>
-            <label className="text-xs text-gray-400">Check In Days</label>
-            <input type="text" value={checkinDays} onChange={e => setCheckinDays(e.target.value)}
-              placeholder="e.g. Sunday or Sunday,Wednesday"
-              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          </div>
-          <button onClick={async () => {
-            await supabase.from('churches').update({
-              name: brandName, tagline: brandTagline,
-              primary_color: brandColor, logo_initials: brandInitials,
-              logo_url: logoUrl || null,
-              checkin_start: checkinStart,
-              checkin_end: checkinEnd,
-              checkin_days: checkinDays,
-            }).eq('id', user.church.id);
-            alert('Branding saved! Refresh to see changes.');
-          }}
 
-          className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor }}>
-            Save Branding
-          </button>
+            {/* Option B giving link */}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Church Giving Link (Optional)</label>
+              <p className="text-xs text-gray-400 mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Paste your own Stripe payment link here. When set, members will be sent to your link instead of the default giving page.</p>
+              <input type="text" placeholder="https://buy.stripe.com/..." value={givingLink} onChange={e => setGivingLink(e.target.value)} style={inputStyle} />
+            </div>
+
+            {/* Preview */}
+            <div className="p-4 rounded-2xl" style={{ background: `${brandColor}15`, border: `1px solid ${brandColor}25` }}>
+              <p className="text-xs font-semibold text-gray-500 mb-2" style={{ fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '0.06em' }}>Preview</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ background: `linear-gradient(135deg, ${brandColor}, ${brandColor}cc)` }}>{brandInitials}</div>
+                <div>
+                  <p className="font-bold text-gray-800 text-sm" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 17 }}>{brandName}</p>
+                  <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>{brandTagline}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Check-in window */}
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Check In Window</label>
+              <p className="text-xs text-gray-400 mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>Members can only check in during this window.</p>
+              <div className="flex gap-2 mb-2">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-400 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Start</label>
+                  <input type="time" value={checkinStart} onChange={e => setCheckinStart(e.target.value)} style={inputStyle} />
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-400 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>End</label>
+                  <input type="time" value={checkinEnd} onChange={e => setCheckinEnd(e.target.value)} style={inputStyle} />
+                </div>
+              </div>
+              <input type="text" value={checkinDays} onChange={e => setCheckinDays(e.target.value)} placeholder="e.g. Sunday or Sunday,Wednesday" style={inputStyle} />
+            </div>
+
+            <LuxBtn color={color} onClick={async () => {
+              await supabase.from('churches').update({ name: brandName, tagline: brandTagline, primary_color: brandColor, logo_initials: brandInitials, logo_url: logoUrl || null, checkin_start: checkinStart, checkin_end: checkinEnd, checkin_days: checkinDays, giving_stripe_link: givingLink || null }).eq('id', user.church.id);
+              alert('Branding saved! Refresh to see changes.');
+            }} style={{ width: '100%' }}>
+              Save All Branding
+            </LuxBtn>
+          </div>
         </div>
       )}
 
       {tab === 'points' && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-4">
-          <h3 className="font-bold text-gray-800">Points Management</h3>
-          <div className="p-4 rounded-xl border-2 border-red-200 bg-red-50">
-            <p className="font-bold text-red-700 mb-1">Manual Reset</p>
-            <p className="text-xs text-red-500 mb-3">Resets all member points to zero immediately. Cannot be undone.</p>
-            <button onClick={async () => {
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <SectionLabel color={color}>Points Management</SectionLabel>
+          <div className="p-4 rounded-2xl mb-4" style={{ background: '#fef2f2', border: '1px solid #fecaca' }}>
+            <p className="font-bold text-red-700 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Manual Reset</p>
+            <p className="text-xs text-red-400 mb-3" style={{ fontFamily: "'DM Sans', sans-serif" }}>Resets all member points to zero immediately. Cannot be undone.</p>
+            <LuxBtn color="#ef4444" onClick={async () => {
               if (!window.confirm('Reset all points to zero? This cannot be undone.')) return;
               await supabase.from('profiles').update({ points: 0 }).eq('church_id', user.church.id);
-              await supabase.from('points_settings').upsert(
-                { church_id: user.church.id, last_reset_at: new Date().toISOString() },
-                { onConflict: 'church_id' }
-              );
+              await supabase.from('points_settings').upsert({ church_id: user.church.id, last_reset_at: new Date().toISOString() }, { onConflict: 'church_id' });
               alert('All points have been reset.');
-            }} className="px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-bold">
-              Reset All Points Now
-            </button>
+            }} style={{ fontSize: 13 }}>Reset All Points Now</LuxBtn>
           </div>
-          <label className="flex items-center gap-3 cursor-pointer">
+          <label className="flex items-center gap-3 cursor-pointer mb-4">
             <input type="checkbox" checked={autoReset} onChange={e => setAutoReset(e.target.checked)} className="rounded" />
-            <p className="font-semibold text-gray-700 text-sm">Enable Automatic Reset</p>
+            <p className="font-semibold text-gray-700 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>Enable Automatic Reset</p>
           </label>
           {autoReset && (
-            <div>
-              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Reset Frequency</label>
-              <select value={resetFreq} onChange={e => setResetFreq(e.target.value)}
-                className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none">
-                {['weekly','biweekly','monthly','quarterly','semi-annually','annually'].map(f => (
-                  <option key={f} value={f} className="capitalize">{f.charAt(0).toUpperCase() + f.slice(1)}</option>
-                ))}
+            <div className="mb-4">
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-widest block mb-1.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Reset Frequency</label>
+              <select value={resetFreq} onChange={e => setResetFreq(e.target.value)} style={{ ...inputStyle, cursor: 'pointer' }}>
+                {['weekly', 'biweekly', 'monthly', 'quarterly', 'semi-annually', 'annually'].map(f => <option key={f} value={f} className="capitalize">{f.charAt(0).toUpperCase() + f.slice(1)}</option>)}
               </select>
             </div>
           )}
-          <button onClick={async () => {
-            await supabase.from('points_settings').upsert(
-              { church_id: user.church.id, auto_reset: autoReset, reset_frequency: resetFreq },
-              { onConflict: 'church_id' }
-            );
+          <LuxBtn color={color} onClick={async () => {
+            await supabase.from('points_settings').upsert({ church_id: user.church.id, auto_reset: autoReset, reset_frequency: resetFreq }, { onConflict: 'church_id' });
             alert('Settings saved.');
-          }} className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor }}>
-            Save Points Settings
-          </button>
+          }} style={{ width: '100%' }}>Save Points Settings</LuxBtn>
         </div>
       )}
-      {tab === 'content' && (
-        <PublishedContentViewer user={user} />
-      )}
-      {tab === 'devotionals' && (
-        <DevotionalManager user={user} />
-      )}
-{tab === 'notifications' && (
-        <NotificationSender user={user} />
-      )}
-{tab === 'groups' && (
-        <GroupManager user={user} />
-      )}
 
-      {tab === 'challenges' && (
-        <ChallengeManager user={user} />
-      )}
+      {tab === 'content' && <PublishedContentViewer user={user} />}
+      {tab === 'devotionals' && <DevotionalManager user={user} />}
+      {tab === 'notifications' && <NotificationSender user={user} />}
+      {tab === 'groups' && <GroupManager user={user} />}
+      {tab === 'challenges' && <ChallengeManager user={user} />}
 
       {tab === 'members' && isSA && (
-        <div className="bg-white rounded-2xl p-4 shadow-sm space-y-2">
-          <h3 className="font-bold text-gray-800 mb-2">Member Management</h3>
+        <div className="rounded-3xl p-5" style={{ background: BRAND.white, border: `1px solid ${color}15` }}>
+          <SectionLabel color={color}>Member Management</SectionLabel>
           {members.map((m, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-gray-100">
-              <div className="flex items-center gap-2">
-                <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={32} color={user.church.primaryColor} />
-                <div>
-                  <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Unnamed'}</p>
-                  <p className="text-xs text-gray-500">{m.points || 0} pts</p>
+            <div key={i} className="p-3 rounded-2xl mb-2" style={{ border: `1px solid ${color}12` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={32} color={color} />
+                <div className="flex-1">
+                  <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.full_name || 'Unnamed'}</p>
                 </div>
               </div>
-              <select value={m.role}
-                onChange={async e => {
-                  await supabase.from('profiles').update({ role: e.target.value }).eq('id', m.id);
-                  setMembers(members.map(x => x.id === m.id ? { ...x, role: e.target.value } : x));
-                }}
-                className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none">
-                {['member','admin','super_admin','group_leader','children_worker'].map(r => (
-                  <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
-                ))}
-              </select>
+
+              {/* Points editing */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs text-gray-500" style={{ fontFamily: "'DM Sans', sans-serif" }}>Points:</span>
+                <input
+                  type="number"
+                  value={pointsEditing[m.id] !== undefined ? pointsEditing[m.id] : m.points || 0}
+                  onChange={e => setPointsEditing({ ...pointsEditing, [m.id]: e.target.value })}
+                  className="w-24 px-2 py-1 rounded-xl text-sm focus:outline-none text-center"
+                  style={{ border: `1.5px solid ${color}25`, background: `${color}08`, fontFamily: "'DM Sans', sans-serif" }}
+                />
+                {pointsEditing[m.id] !== undefined && (
+                  <LuxBtn color={color} variant="ghost" onClick={async () => {
+                    await supabase.from('profiles').update({ points: parseInt(pointsEditing[m.id]) }).eq('id', m.id);
+                    setMembers(members.map(x => x.id === m.id ? { ...x, points: parseInt(pointsEditing[m.id]) } : x));
+                    const updated = { ...pointsEditing };
+                    delete updated[m.id];
+                    setPointsEditing(updated);
+                  }} style={{ fontSize: 11, padding: '4px 10px' }}>Save</LuxBtn>
+                )}
+              </div>
+
+              {/* Primary role */}
+              <div className="mb-2">
+                <span className="text-xs text-gray-500 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Primary Role:</span>
+                <select
+                  value={m.role}
+                  onChange={async e => {
+                    await supabase.from('profiles').update({ role: e.target.value }).eq('id', m.id);
+                    setMembers(members.map(x => x.id === m.id ? { ...x, role: e.target.value } : x));
+                  }}
+                  style={{ ...inputStyle, padding: '8px 12px', fontSize: 13 }}
+                >
+                  {['member', 'admin', 'super_admin', 'group_leader', 'children_worker'].map(r => (
+                    <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Secondary role */}
+              <div className="mb-2">
+                <span className="text-xs text-gray-500 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Secondary Role:</span>
+                <select
+                  value={m.secondary_role || ''}
+                  onChange={async e => {
+                    await supabase.from('profiles').update({ secondary_role: e.target.value || null }).eq('id', m.id);
+                    setMembers(members.map(x => x.id === m.id ? { ...x, secondary_role: e.target.value } : x));
+                  }}
+                  style={{ ...inputStyle, padding: '8px 12px', fontSize: 13 }}
+                >
+                  <option value="">None</option>
+                  <option value="group_leader">Group Leader</option>
+                  <option value="children_worker">Children's Worker</option>
+                </select>
+              </div>
+
+              {/* Secondary role 2 */}
+              <div>
+                <span className="text-xs text-gray-500 block mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Secondary Role 2:</span>
+                <select
+                  value={m.secondary_role_2 || ''}
+                  onChange={async e => {
+                    await supabase.from('profiles').update({ secondary_role_2: e.target.value || null }).eq('id', m.id);
+                    setMembers(members.map(x => x.id === m.id ? { ...x, secondary_role_2: e.target.value } : x));
+                  }}
+                  style={{ ...inputStyle, padding: '8px 12px', fontSize: 13 }}
+                >
+                  <option value="">None</option>
+                  <option value="group_leader">Group Leader</option>
+                  <option value="children_worker">Children's Worker</option>
+                </select>
+              </div>
             </div>
           ))}
         </div>
@@ -3805,16 +4860,19 @@ const adminTabs = ['overview', 'content', 'devotionals', 'branding', 'points', '
     </div>
   );
 }
+
+// ── Direct Message Screen ──────────────────────────────────────────────────
 function DirectMessageScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [msgs, setMsgs] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
   const [selMember, setSelMember] = useState<any>(null);
   const [text, setText] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
-  const isAdmin = user.role === 'super_admin' || user.role === 'admin';
+  const isAdminUser = isAdmin(user);
+  const color = user.church.primaryColor;
 
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdminUser) {
       (async () => {
         const { data } = await supabase.from('profiles').select('id, full_name, avatar_url')
           .eq('church_id', user.church.id)
@@ -3828,9 +4886,9 @@ function DirectMessageScreen({ user, onBack }: { user: User; onBack: () => void 
   }, [user.church.id]);
 
   async function loadMessages(memberId: string) {
-    const { data } = await supabase.from('direct_messages').select('*, profiles!direct_messages_author_id_fkey(full_name, avatar_url)')
-      .eq('church_id', user.church.id)
-      .eq('member_id', memberId)
+    const { data } = await supabase.from('direct_messages')
+      .select('*, profiles!direct_messages_author_id_fkey(full_name, avatar_url)')
+      .eq('church_id', user.church.id).eq('member_id', memberId)
       .order('created_at', { ascending: true });
     if (data) setMsgs(data);
     setTimeout(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -3838,38 +4896,31 @@ function DirectMessageScreen({ user, onBack }: { user: User; onBack: () => void 
 
   async function send() {
     if (!text.trim()) return;
-    const memberId = isAdmin ? selMember?.id : user.id;
-    await supabase.from('direct_messages').insert({
-      church_id: user.church.id,
-      member_id: memberId,
-      author_id: user.id,
-      content: text,
-      is_from_admin: isAdmin,
-    });
+    const memberId = isAdminUser ? selMember?.id : user.id;
+    await supabase.from('direct_messages').insert({ church_id: user.church.id, member_id: memberId, author_id: user.id, content: text, is_from_admin: isAdminUser });
     setText('');
     loadMessages(memberId);
   }
 
-  if (isAdmin && !selMember) return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Member Messages</h2>
-      </div>
-      <div className="space-y-2">
+  if (isAdminUser && !selMember) return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Member Messages" onBack={onBack} color={color} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {members.length === 0 ? (
-          <div className="bg-white rounded-2xl p-6 text-center shadow-sm">
-            <p className="text-gray-400 text-sm">No members yet.</p>
-          </div>
+          <EmptyState icon="💬" message="No members yet." />
         ) : members.map((m, i) => (
-          <button key={i} onClick={() => { setSelMember(m); loadMessages(m.id); }}
-            className="w-full bg-white rounded-2xl p-4 shadow-sm flex items-center gap-3 text-left">
-            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={40} color={user.church.primaryColor} />
+          <button
+            key={i}
+            onClick={() => { setSelMember(m); loadMessages(m.id); }}
+            className="rounded-3xl p-4 flex items-center gap-3 text-left"
+            style={{ background: BRAND.white, border: `1px solid ${color}12`, boxShadow: `0 2px 8px ${color}06`, cursor: 'pointer' }}
+          >
+            <Avatar url={m.avatar_url} name={m.full_name || 'Member'} size={38} color={color} />
             <div className="flex-1">
-              <p className="font-semibold text-gray-800 text-sm">{m.full_name || 'Member'}</p>
-              <p className="text-xs text-gray-400">Tap to view messages</p>
+              <p className="font-semibold text-gray-800 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.full_name || 'Member'}</p>
+              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>Tap to view messages</p>
             </div>
-            <span className="text-gray-400">›</span>
+            <span style={{ color: `${color}50`, fontSize: 20 }}>›</span>
           </button>
         ))}
       </div>
@@ -3877,176 +4928,486 @@ function DirectMessageScreen({ user, onBack }: { user: User; onBack: () => void 
   );
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={() => isAdmin ? setSelMember(null) : onBack()} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">
-          {isAdmin ? selMember?.full_name : 'Message Admin Team'}
-        </h2>
-      </div>
-      {!isAdmin && (
-        <div className="rounded-xl p-3 bg-blue-50 border border-blue-100">
-          <p className="text-xs text-blue-600">Your messages are private and only visible to church admins.</p>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title={isAdminUser ? selMember?.full_name : 'Message Admin Team'} onBack={() => isAdminUser ? setSelMember(null) : onBack()} color={color} />
+      {!isAdminUser && (
+        <div className="rounded-2xl p-3" style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+          <p className="text-xs text-blue-600" style={{ fontFamily: "'DM Sans', sans-serif" }}>Your messages are private and only visible to church admins.</p>
         </div>
       )}
-      <div className="bg-white rounded-2xl shadow-sm flex flex-col" style={{ height: '60vh' }}>
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
-          {msgs.length === 0 && (
-            <div className="text-center py-8">
-              <p className="text-gray-400 text-sm">No messages yet. Start the conversation.</p>
-            </div>
-          )}
+      <div className="rounded-3xl overflow-hidden flex flex-col" style={{ background: BRAND.white, border: `1px solid ${color}15`, height: '62vh' }}>
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {msgs.length === 0 && <EmptyState icon="💬" message="No messages yet. Start the conversation." />}
           {msgs.map((m, i) => {
             const own = m.author_id === user.id;
             return (
               <div key={i} className={`flex gap-2 ${own ? 'flex-row-reverse' : ''}`}>
-                {!own && <Avatar url={m.profiles?.avatar_url} name={m.profiles?.full_name || 'Admin'} size={28} color={user.church.primaryColor} />}
+                {!own && <Avatar url={m.profiles?.avatar_url} name={m.profiles?.full_name || 'Admin'} size={26} color={color} />}
                 <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
-                  {!own && <p className="text-xs text-gray-400 mb-1">{m.profiles?.full_name || 'Admin'}</p>}
-                  <div className="px-3 py-2 rounded-2xl text-sm"
-                    style={{ backgroundColor: own ? user.church.primaryColor : '#F3F4F6', color: own ? BRAND.white : '#1F2937' }}>
+                  {!own && <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.profiles?.full_name || 'Admin'}</p>}
+                  <div
+                    className="px-4 py-2.5 text-sm"
+                    style={{
+                      background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
+                      color: own ? BRAND.white : '#1F2937',
+                      fontFamily: "'DM Sans', sans-serif",
+                      boxShadow: own ? `0 4px 12px ${color}30` : 'none',
+                      borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                    }}
+                  >
                     {m.content}
                   </div>
-                  <p className="text-xs text-gray-400 mt-0.5">{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                  <p className="text-xs text-gray-400 mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
                 </div>
               </div>
             );
           })}
           <div ref={endRef} />
         </div>
-        <div className="p-3 border-t border-gray-100 flex gap-2">
-          <input type="text" placeholder="Type a message..." value={text}
+        <div className="p-3 flex gap-2" style={{ borderTop: `1px solid ${color}10` }}>
+          <input
+            type="text" placeholder="Type a message..." value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') send(); }}
-            className="flex-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
-          <button onClick={send}
-            className="px-4 py-2 rounded-xl text-white text-sm font-semibold"
-            style={{ backgroundColor: user.church.primaryColor }}>Send</button>
+            className="flex-1 px-4 py-2.5 rounded-2xl text-sm focus:outline-none"
+            style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
+          />
+          <LuxBtn color={color} onClick={send} style={{ padding: '10px 18px', fontSize: 13 }}>Send</LuxBtn>
         </div>
       </div>
     </div>
   );
 }
-
 // ── Pricing Screen ─────────────────────────────────────────────────────────
 function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
+  const color = user.church.primaryColor;
+
   const plans = [
     {
-      name: 'Starter', price: '$69', desc: 'Perfect for small churches',
-      link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00', popular: false,
-      features: ['Up to 75 members','5 admin seats','10 small groups','Push notifications','QR attendance check-in','Prayer wall','Challenges and leaderboard'],
+      name: 'Starter',
+      price: '$69',
+      desc: 'Perfect for small churches ready to take discipleship seriously.',
+      link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00',
+      popular: false,
+      features: [
+        'Up to 75 members',
+        '5 admin seats',
+        '10 small groups',
+        'Push notifications',
+        'QR attendance check-in',
+        'Prayer wall',
+        'Challenges and leaderboard',
+        'Announcements and events',
+        'Member directory',
+        'Giving',
+      ],
     },
     {
-      name: 'Growth', price: '$147', desc: 'For growing churches ready to go deeper',
-      link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01', popular: true,
-      features: ['Up to 250 members','10 admin seats','25 small groups','Everything in Starter',"Children's check-in add-on",'AI Sermon Assistant add-on'],
+      name: 'Growth',
+      price: '$147',
+      desc: 'For growing churches ready to build community and go deeper.',
+      link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01',
+      popular: true,
+      features: [
+        'Up to 250 members',
+        '10 admin seats',
+        '25 small groups',
+        'Everything in Starter',
+        'Business directory',
+        'AI Sermon Assistant',
+        "Children's check-in",
+      ],
     },
     {
-      name: 'Kingdom', price: '$247', desc: 'Everything included for thriving churches',
-      link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02', popular: false,
-      features: ['Up to 1,000 members','Unlimited seats and groups','AI Sermon Assistant included',"Children's check-in included",'Analytics Pro','Multi-campus','Everything in Growth'],
+      name: 'Kingdom',
+      price: '$247',
+      desc: 'Everything included for thriving churches building the Kingdom.',
+      link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02',
+      popular: false,
+      features: [
+        'Up to 1,000 members',
+        'Unlimited admin seats',
+        'Unlimited groups',
+        'Everything in Growth',
+        'Advanced admin panel',
+        'Custom church branding',
+        'Direct member messaging',
+        'Priority support',
+        'Multi campus ready',
+      ],
     },
   ];
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <button onClick={onBack} className="text-gray-400 text-xl">‹</button>
-        <h2 className="font-bold text-gray-800 text-lg">Choose Your Plan</h2>
-      </div>
-      <div className="flex justify-center">
-        <FloremusLogo size={80} variant="seal" />
-      </div>
-<div className="rounded-2xl p-4 text-center border-2" style={{ borderColor: user.church.primaryColor, backgroundColor: '#F5F0FF' }}>
-        <p className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: user.church.primaryColor }}>Founding Church Offer</p>
-        <p className="font-bold text-gray-800 text-sm">The first 25 churches get full Kingdom tier access at the Starter price.</p>
-        <p className="text-xs text-gray-500 mt-1">Lock in your spot before this offer closes.</p>
-      </div>
-      <p className="text-center text-gray-500 text-sm">30-day money back guarantee on all plans</p>
+  const inputStyle: React.CSSProperties = {
+    padding: '8px 0',
+    fontFamily: "'DM Sans', sans-serif",
+    fontSize: 13,
+    color: '#4b5563',
+  };
 
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <BackHeader title="Plans and Pricing" onBack={onBack} color={color} />
+
+      {/* Seal logo */}
+      <div className="flex justify-center">
+        <FloremusLogo size={72} variant="seal" />
+      </div>
+
+      {/* FLOURISH818 offer banner */}
+      <div
+        className="rounded-3xl p-5 text-center relative overflow-hidden"
+        style={{
+          background: `linear-gradient(135deg, ${color}18, ${color}08)`,
+          border: `2px solid ${color}35`,
+        }}
+      >
+        <div style={{ position: 'absolute', top: -20, right: -20, width: 100, height: 100, borderRadius: '50%', background: `${color}10` }} />
+        <p
+          className="text-xs font-bold uppercase tracking-widest mb-1"
+          style={{ color: '#f59e0b', fontFamily: "'DM Sans', sans-serif" }}
+        >
+          Limited Time Offer
+        </p>
+        <p
+          className="font-bold text-gray-800 mb-1"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22 }}
+        >
+          40% Off Your First 6 Months
+        </p>
+        <p className="text-gray-500 text-xs mb-3" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+          The next 15 ministries to sign up this June receive 40% off for 6 months.
+        </p>
+        <div
+          className="inline-block px-5 py-2 rounded-2xl mb-1"
+          style={{ background: 'rgba(245,158,11,0.1)', border: '1.5px dashed #f59e0b' }}
+        >
+          <p className="text-xs text-amber-500 font-semibold mb-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Use code at checkout</p>
+          <p className="font-bold text-gray-800 tracking-widest" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 20, letterSpacing: 4 }}>FLOURISH818</p>
+        </div>
+        <p className="text-xs text-gray-400 mt-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+          June 2025 only. New accounts only. Limited to 15 ministries.
+        </p>
+      </div>
+
+      {/* Plan cards */}
       {plans.map((p, i) => (
-        <div key={i} className="bg-white rounded-2xl p-5 shadow-sm border-2 relative"
-          style={{ borderColor: p.popular ? user.church.primaryColor : '#F3F4F6' }}>
+        <div
+          key={i}
+          className="rounded-3xl p-5 relative"
+          style={{
+            background: p.popular ? `linear-gradient(160deg, ${color}12, ${BRAND.white})` : BRAND.white,
+            border: `2px solid ${p.popular ? color : color + '20'}`,
+            boxShadow: p.popular ? `0 8px 32px ${color}20` : `0 2px 12px ${color}08`,
+          }}
+        >
           {p.popular && (
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <span className="text-white text-xs font-bold px-3 py-1 rounded-full"
-                style={{ backgroundColor: user.church.primaryColor }}>MOST POPULAR</span>
+            <div
+              className="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-white text-xs font-bold"
+              style={{ background: `linear-gradient(135deg, ${color}, ${color}cc)`, fontFamily: "'DM Sans', sans-serif", letterSpacing: '0.05em', whiteSpace: 'nowrap' }}
+            >
+              MOST POPULAR
             </div>
           )}
+
           <div className="flex justify-between items-start mb-3">
             <div>
-              <h3 className="text-xl font-bold text-gray-800">{p.name}</h3>
-              <p className="text-gray-500 text-xs mt-1">{p.desc}</p>
+              <h3
+                className="font-bold text-gray-900"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 26 }}
+              >
+                {p.name}
+              </h3>
+              <p className="text-gray-400 text-xs mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{p.desc}</p>
             </div>
             <div className="text-right">
-              <span className="text-3xl font-bold text-gray-800">{p.price}</span>
-              <span className="text-gray-500 text-sm">/mo</span>
+              <span
+                className="font-bold text-gray-900"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 38 }}
+              >
+                {p.price}
+              </span>
+              <span className="text-gray-400 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>/mo</span>
             </div>
           </div>
-          <div className="space-y-1 mb-4">
+
+          <div
+            className="mb-4 pb-4"
+            style={{ borderBottom: `1px solid ${color}12` }}
+          >
             {p.features.map((f, j) => (
-              <div key={j} className="flex items-center gap-2">
-                <span className="text-green-500 text-sm font-bold">✓</span>
-                <span className="text-gray-600 text-sm">{f}</span>
+              <div key={j} className="flex items-center gap-2 mb-1.5">
+                <span style={{ color, fontSize: 13, fontWeight: 700 }}>✓</span>
+                <span className="text-gray-600 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f}</span>
               </div>
             ))}
           </div>
-          <button onClick={() => window.open(p.link, '_blank')}
-            className="w-full py-3 rounded-xl text-white font-bold"
-            style={{ backgroundColor: user.church.primaryColor }}>
+
+          <LuxBtn
+            color={color}
+            onClick={() => window.open(p.link, '_blank')}
+            style={{ width: '100%', fontSize: 15 }}
+          >
             Subscribe to {p.name}
-          </button>
+          </LuxBtn>
         </div>
       ))}
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+      {/* Enterprise */}
+      <div
+        className="rounded-3xl p-5"
+        style={{ background: BRAND.white, border: `1px solid ${color}18`, boxShadow: `0 2px 12px ${color}06` }}
+      >
         <div className="flex justify-between items-start mb-3">
           <div>
-            <h3 className="font-bold text-gray-800 text-lg">Enterprise</h3>
-            <p className="text-gray-500 text-xs">For churches of 1,000 or more members</p>
+            <h3 className="font-bold text-gray-900" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24 }}>Enterprise</h3>
+            <p className="text-gray-400 text-xs mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>For churches of 1,000 or more members</p>
           </div>
           <div className="text-right">
-            <span className="text-2xl font-bold text-gray-800">$597+</span>
-            <p className="text-gray-500 text-xs">/month</p>
+            <span className="font-bold text-gray-900" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32 }}>$597+</span>
+            <p className="text-gray-400 text-xs" style={{ fontFamily: "'DM Sans', sans-serif" }}>/month</p>
           </div>
         </div>
-        <div className="space-y-1 mb-4">
-          {['Dedicated account manager','Native iOS and Android app','4-hour support SLA','Quarterly strategy calls','Custom feature review','Everything in Kingdom'].map((f, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="text-green-500 text-sm font-bold">✓</span>
-              <span className="text-gray-600 text-sm">{f}</span>
+        <div className="mb-4">
+          {['Everything in Kingdom', 'Dedicated account manager', 'Native iOS and Android app', '4 hour support SLA', 'Quarterly strategy calls', 'Custom feature development'].map((f, i) => (
+            <div key={i} className="flex items-center gap-2 mb-1.5">
+              <span style={{ color, fontSize: 13, fontWeight: 700 }}>✓</span>
+              <span className="text-gray-600 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f}</span>
             </div>
           ))}
         </div>
-        <a href="mailto:enterprise@floremus.church?subject=Enterprise Pricing Inquiry&body=Hi, I am interested in Floremus Enterprise pricing for our church."
-          className="block w-full py-3 rounded-xl text-center font-bold text-white"
-          style={{ backgroundColor: BRAND.plum }}>
+        <a
+          href="mailto:enterprise@floremus.church?subject=Enterprise Pricing Inquiry"
+          className="block w-full py-3 rounded-2xl text-center font-bold text-white"
+          style={{ background: `linear-gradient(135deg, ${BRAND.plum}, #2d1060)`, fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}
+        >
           Contact Us for Enterprise Pricing
         </a>
       </div>
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+      {/* Concierge */}
+      <div
+        className="rounded-3xl p-5"
+        style={{ background: BRAND.white, border: `1px solid ${color}18`, boxShadow: `0 2px 12px ${color}06` }}
+      >
         <div className="flex justify-between items-center mb-2">
           <div>
-            <h3 className="font-bold text-gray-800">Concierge Launch</h3>
-            <p className="text-gray-500 text-xs">Hands-on onboarding with a dedicated rep</p>
+            <h3 className="font-bold text-gray-900" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22 }}>Concierge Launch</h3>
+            <p className="text-gray-400 text-xs mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>Hands-on onboarding with a dedicated rep</p>
           </div>
           <div className="text-right">
-            <span className="text-2xl font-bold text-gray-800">$199</span>
-            <p className="text-gray-500 text-xs">one time</p>
+            <span className="font-bold text-gray-900" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>$199</span>
+            <p className="text-gray-400 text-xs" style={{ fontFamily: "'DM Sans', sans-serif" }}>one time</p>
           </div>
         </div>
-        <button onClick={() => window.open('https://buy.stripe.com/6oUcN5dr99IyfBMdqKb3q04', '_blank')}
-          className="w-full py-2 rounded-xl font-bold text-sm border"
-          style={{ color: user.church.primaryColor, borderColor: user.church.primaryColor }}>
+        <div className="mb-4">
+          {['Full platform setup and configuration', 'Staff training session', '30 day post-launch check-in', 'Available on any plan'].map((f, i) => (
+            <div key={i} className="flex items-center gap-2 mb-1.5">
+              <span style={{ color, fontSize: 13, fontWeight: 700 }}>✓</span>
+              <span className="text-gray-600 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>{f}</span>
+            </div>
+          ))}
+        </div>
+        <LuxBtn
+          color={color}
+          variant="outline"
+          onClick={() => window.open('https://buy.stripe.com/6oUcN5dr99IyfBMdqKb3q04', '_blank')}
+          style={{ width: '100%', fontSize: 14 }}
+        >
           Add Concierge Launch
-        </button>
+        </LuxBtn>
       </div>
 
-      <p className="text-center text-xs text-gray-400 pb-4">All plans include a 30-day money back guarantee. Cancel anytime.</p>
+      <p
+        className="text-center text-xs text-gray-400 pb-4"
+        style={{ fontFamily: "'DM Sans', sans-serif" }}
+      >
+        No long-term contracts. Cancel any time.
+      </p>
     </div>
   );
 }
+
+// ── Grace Period Screen ────────────────────────────────────────────────────
+function GracePeriodScreen({ user, daysLeft }: { user: User; daysLeft: number }) {
+  const color = user.church.primaryColor;
+  const urgencyColor = daysLeft <= 2 ? '#ef4444' : daysLeft <= 4 ? '#f59e0b' : color;
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      <div style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(239,68,68,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex justify-center mb-8">
+          <FloremusLogo size={140} variant="withTagline" />
+        </div>
+
+        <div
+          className="rounded-3xl p-8 text-center"
+          style={{ background: 'rgba(255,255,255,0.06)', border: `1px solid ${urgencyColor}40`, backdropFilter: 'blur(20px)' }}
+        >
+          <div style={{ fontSize: 52, marginBottom: 16 }}>⚠️</div>
+
+          <h2
+            className="font-bold text-white mb-2"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30 }}
+          >
+            Payment Issue
+          </h2>
+
+          <p className="text-gray-300 mb-6 leading-relaxed" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15 }}>
+            There was a problem processing your payment. Your church still has access but your account will be locked in:
+          </p>
+
+          {/* Countdown */}
+          <div
+            className="rounded-2xl p-6 mb-6 inline-block w-full"
+            style={{ background: `${urgencyColor}18`, border: `2px solid ${urgencyColor}50` }}
+          >
+            <p
+              className="font-bold"
+              style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 72, color: urgencyColor, lineHeight: 1 }}
+            >
+              {daysLeft}
+            </p>
+            <p
+              className="font-semibold mt-1"
+              style={{ color: urgencyColor, fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}
+            >
+              {daysLeft === 1 ? 'day remaining' : 'days remaining'}
+            </p>
+          </div>
+
+          <p className="text-gray-400 text-sm mb-6" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Update your payment method to keep {user.church.name} active and your congregation connected.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <LuxBtn
+              color={urgencyColor}
+              onClick={() => window.open('https://billing.stripe.com', '_blank')}
+              style={{ width: '100%', fontSize: 15, padding: '15px 0' }}
+            >
+              Update Payment Method
+            </LuxBtn>
+
+            <button
+              onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }}
+              style={{ background: 'none', border: 'none', color: 'rgba(192,198,204,0.5)', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+            >
+              Sign out
+            </button>
+          </div>
+        </div>
+
+        <p
+          className="text-center mt-6"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.25)', fontSize: 13 }}
+        >
+          Need help? Email support@floremus.church
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Paywall Screen ─────────────────────────────────────────────────────────
+function PaywallScreen({ user }: { user: User }) {
+  const plans = [
+    { name: 'Starter', price: '$69', link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00' },
+    { name: 'Growth', price: '$147', link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01' },
+    { name: 'Kingdom', price: '$247', link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02' },
+  ];
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', width: 600, height: 600, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex justify-center mb-8">
+          <FloremusLogo size={140} variant="withTagline" />
+        </div>
+
+        <div className="text-center mb-6">
+          <h2
+            className="font-bold text-white mb-2"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 32 }}
+          >
+            Choose Your Plan
+          </h2>
+          <p className="text-gray-400 text-sm" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Select a plan to activate {user.church.name} on Floremus.
+          </p>
+        </div>
+
+        {/* FLOURISH818 offer */}
+        <div
+          className="rounded-2xl p-4 text-center mb-6"
+          style={{ background: 'rgba(245,158,11,0.08)', border: '1.5px dashed rgba(245,158,11,0.5)' }}
+        >
+          <p className="text-xs font-bold uppercase tracking-widest text-amber-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Founding Church Offer
+          </p>
+          <p className="text-white text-sm font-semibold mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            40% off for your first 6 months
+          </p>
+          <p className="text-gray-400 text-xs mb-2" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Next 15 ministries only. June 2025. Enter at checkout:
+          </p>
+          <div
+            className="inline-block px-4 py-1.5 rounded-xl"
+            style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.4)' }}
+          >
+            <span className="font-bold text-amber-400 tracking-widest" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 18, letterSpacing: 4 }}>FLOURISH818</span>
+          </div>
+        </div>
+
+        {/* Plan cards */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
+          {plans.map((p, i) => (
+            <button
+              key={i}
+              onClick={() => window.open(p.link, '_blank')}
+              className="w-full p-4 rounded-2xl text-left flex items-center justify-between"
+              style={{
+                background: 'rgba(255,255,255,0.06)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+              }}
+            >
+              <div>
+                <p className="font-bold text-white" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>{p.name}</p>
+                <p className="text-gray-400 text-xs mt-0.5" style={{ fontFamily: "'DM Sans', sans-serif" }}>per month</p>
+              </div>
+              <span className="font-bold text-white" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>{p.price}</span>
+            </button>
+          ))}
+        </div>
+
+        <p className="text-center text-gray-500 text-xs mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+          No long-term contracts. Cancel any time.
+        </p>
+
+        <button
+          onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }}
+          className="w-full text-center text-sm"
+          style={{ color: BRAND.sage, background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+        >
+          Sign out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Email Confirm Screen ───────────────────────────────────────────────────
 function EmailConfirmScreen() {
   const [count, setCount] = useState(10);
 
@@ -4057,35 +5418,90 @@ function EmailConfirmScreen() {
   }, [count]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md text-center space-y-6">
-        <div className="flex justify-center">
-          <FloremusLogo size={120} variant="withTagline" />
+    <div
+      className="min-h-screen flex items-center justify-center px-6"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      <div style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md text-center relative z-10">
+        <div className="flex justify-center mb-8">
+          <FloremusLogo size={140} variant="withTagline" />
         </div>
-        <div className="p-6 rounded-2xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-          <p className="text-4xl mb-4">✅</p>
-          <p className="text-white font-bold text-xl mb-2">Email Confirmed!</p>
-          <p className="text-gray-400 text-sm mb-6">Your account is ready. Welcome to Floremus.</p>
-          <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-4"
-            style={{ borderColor: BRAND.purple }}>
-            <p className="text-white text-2xl font-bold">{count}</p>
+
+        <div
+          className="p-8 rounded-3xl"
+          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}
+        >
+          <div style={{ fontSize: 56, marginBottom: 16 }}>✅</div>
+          <h2
+            className="font-bold text-white mb-2"
+            style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 30 }}
+          >
+            Email Confirmed!
+          </h2>
+          <p className="text-gray-400 mb-6" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 15 }}>
+            Your account is ready. Welcome to Floremus.
+          </p>
+
+          <div
+            className="flex items-center justify-center rounded-full mx-auto mb-4"
+            style={{
+              width: 64,
+              height: 64,
+              border: `3px solid ${BRAND.purple}`,
+              background: `${BRAND.purple}18`,
+            }}
+          >
+            <p className="font-bold text-white" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>{count}</p>
           </div>
-          <p className="text-gray-400 text-xs mb-4">Redirecting to sign in in {count} seconds</p>
-          <button onClick={() => window.location.href = '/'}
-            className="w-full py-3 rounded-xl font-bold text-white"
-            style={{ backgroundColor: BRAND.purple }}>
+          <p className="text-gray-400 text-xs mb-6" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+            Redirecting to sign in in {count} seconds
+          </p>
+
+          <LuxBtn
+            color={BRAND.purple}
+            onClick={() => window.location.href = '/'}
+            style={{ width: '100%', fontSize: 15, padding: '14px 0' }}
+          >
             Sign In Now
-          </button>
+          </LuxBtn>
         </div>
+
+        <p
+          className="text-center mt-8"
+          style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.25)', fontSize: 13 }}
+        >
+          Built for Flourishing
+        </p>
       </div>
     </div>
   );
 }
+
+// ── Reset Password Screen ──────────────────────────────────────────────────
 function ResetPasswordScreen() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [done, setDone] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const [showCf, setShowCf] = useState(false);
+
+  const pwMatch = password === confirm && confirm.length > 0;
+
+  const inputBase: React.CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 14,
+    border: '1.5px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.07)',
+    color: BRAND.white,
+    fontSize: 15,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
 
   async function updatePassword() {
     if (password !== confirm) { alert('Passwords do not match'); return; }
@@ -4098,45 +5514,238 @@ function ResetPasswordScreen() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md space-y-4">
-        <div className="flex justify-center mb-6">
-          <FloremusLogo size={120} variant="withTagline" />
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      <div style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex justify-center mb-8">
+          <FloremusLogo size={140} variant="withTagline" />
         </div>
-        {done ? (
-          <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-            <p className="text-white font-semibold mb-2">Password updated!</p>
-            <p className="text-gray-400 text-sm mb-4">You can now sign in with your new password.</p>
-            <button onClick={() => window.location.href = '/'}
-              className="w-full py-3 rounded-xl font-bold text-white"
-              style={{ backgroundColor: BRAND.purple }}>
-              Go to Sign In
-            </button>
-          </div>
-        ) : (
-          <>
-            <p className="text-center text-gray-400 text-sm">Enter your new password below.</p>
-            <input type="password" placeholder="New password" value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <input type="password" placeholder="Confirm new password" value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <button onClick={updatePassword} disabled={loading}
-              className="w-full py-3 rounded-xl font-bold text-white"
-              style={{ backgroundColor: BRAND.purple, opacity: loading ? 0.7 : 1 }}>
-              {loading ? 'Updating...' : 'Update Password'}
-            </button>
-          </>
-        )}
+
+        <div
+          className="rounded-3xl p-8"
+          style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}
+        >
+          {done ? (
+            <div className="text-center">
+              <div style={{ fontSize: 52, marginBottom: 16 }}>🔐</div>
+              <h2 className="font-bold text-white mb-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>Password Updated!</h2>
+              <p className="text-gray-400 mb-6" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}>You can now sign in with your new password.</p>
+              <LuxBtn color={BRAND.purple} onClick={() => window.location.href = '/'} style={{ width: '100%', fontSize: 15, padding: '14px 0' }}>
+                Go to Sign In
+              </LuxBtn>
+            </div>
+          ) : (
+            <>
+              <h2 className="font-bold text-white mb-1 text-center" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>Reset Password</h2>
+              <p className="text-center mb-6" style={{ color: 'rgba(192,198,204,0.6)', fontSize: 14, fontFamily: "'DM Sans', sans-serif" }}>Enter your new password below</p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>New Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input type={showPw ? 'text' : 'password'} placeholder="Create a new password" value={password} onChange={e => setPassword(e.target.value)} style={{ ...inputBase, paddingRight: 60 }} />
+                    <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
+                      {showPw ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>Confirm Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showCf ? 'text' : 'password'}
+                      placeholder="Repeat your new password"
+                      value={confirm}
+                      onChange={e => setConfirm(e.target.value)}
+                      style={{
+                        ...inputBase,
+                        paddingRight: 60,
+                        borderColor: confirm.length > 0 ? (pwMatch ? 'rgba(74,222,128,0.5)' : 'rgba(248,113,113,0.5)') : 'rgba(255,255,255,0.15)',
+                      }}
+                    />
+                    <button type="button" onClick={() => setShowCf(!showCf)} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
+                      {showCf ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  {confirm.length > 0 && (
+                    <p style={{ fontSize: 12, marginTop: 6, color: pwMatch ? '#4ade80' : '#f87171', fontFamily: "'DM Sans', sans-serif" }}>
+                      {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                    </p>
+                  )}
+                </div>
+
+                <LuxBtn color={BRAND.purple} onClick={updatePassword} disabled={loading} style={{ width: '100%', fontSize: 15, padding: '14px 0', marginTop: 4 }}>
+                  {loading ? 'Updating...' : 'Update Password'}
+                </LuxBtn>
+              </div>
+            </>
+          )}
+        </div>
+
+        <p className="text-center mt-8" style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.25)', fontSize: 13 }}>
+          Built for Flourishing
+        </p>
       </div>
     </div>
   );
 }
 
-// ── Main App ───────────────────────────────────────────────────────────────
+// ── Join Screen ────────────────────────────────────────────────────────────
+function JoinScreen({ code }: { code: string }) {
+  const [church, setChurch] = useState<any>(null);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const pwMatch = password === confirm && confirm.length > 0;
+  const churchColor = church?.primary_color || BRAND.purple;
+
+  useEffect(() => {
+    (async () => {
+      const { data: invite } = await supabase.from('invites')
+        .select('*, churches(*)')
+        .eq('code', code)
+        .eq('active', true)
+        .gt('expires_at', new Date().toISOString())
+        .maybeSingle();
+      if (invite?.churches) setChurch(invite.churches);
+      else alert('This invite link is invalid or has expired.');
+    })();
+  }, [code]);
+
+  async function join() {
+    if (!name || !email || !password) { alert('Please fill in all fields'); return; }
+    if (!pwMatch) { alert('Passwords do not match'); return; }
+    if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
+    setLoading(true);
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) { alert(error.message); setLoading(false); return; }
+    if (data.user) {
+      await supabase.from('profiles').insert({ id: data.user.id, church_id: church.id, full_name: name, role: 'member', points: 0, streak: 0 });
+      setDone(true);
+    }
+    setLoading(false);
+  }
+
+  const inputBase: React.CSSProperties = {
+    width: '100%',
+    padding: '14px 16px',
+    borderRadius: 14,
+    border: '1.5px solid rgba(255,255,255,0.15)',
+    background: 'rgba(255,255,255,0.07)',
+    color: BRAND.white,
+    fontSize: 15,
+    fontFamily: "'DM Sans', sans-serif",
+    outline: 'none',
+    boxSizing: 'border-box',
+  };
+
+  if (!church) return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}>
+      <p className="text-white" style={{ fontFamily: "'DM Sans', sans-serif" }}>Loading...</p>
+    </div>
+  );
+
+  return (
+    <div
+      className="min-h-screen flex items-center justify-center px-6 py-12"
+      style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+    >
+      <div style={{ position: 'fixed', top: '10%', left: '50%', transform: 'translateX(-50%)', width: 600, height: 600, borderRadius: '50%', background: `radial-gradient(circle, ${churchColor}18 0%, transparent 70%)`, pointerEvents: 'none' }} />
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex justify-center mb-6">
+          <FloremusLogo size={140} variant="withTagline" />
+        </div>
+
+        {done ? (
+          <div
+            className="text-center p-8 rounded-3xl"
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(20px)' }}
+          >
+            <div style={{ fontSize: 52, marginBottom: 16 }}>🎉</div>
+            <h2 className="font-bold text-white mb-2" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>Welcome to {church.name}!</h2>
+            <p className="text-gray-400 mb-6" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 14 }}>Check your email to confirm your account, then sign in.</p>
+            <LuxBtn color={churchColor} onClick={() => window.location.href = '/'} style={{ width: '100%', fontSize: 15, padding: '14px 0' }}>
+              Sign In Now
+            </LuxBtn>
+          </div>
+        ) : (
+          <div
+            className="rounded-3xl p-8"
+            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(24px)' }}
+          >
+            <div className="text-center mb-6">
+              <p className="text-gray-400 text-sm mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>You have been invited to join</p>
+              <h2 className="font-bold text-white" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 28 }}>{church.name}</h2>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>Your Full Name</label>
+                <input type="text" placeholder="First and last name" value={name} onChange={e => setName(e.target.value)} style={inputBase} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>Email Address</label>
+                <input type="email" placeholder="your@email.com" value={email} onChange={e => setEmail(e.target.value)} style={inputBase} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>Create a Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input type={showPw ? 'text' : 'password'} placeholder="At least 8 characters" value={password} onChange={e => setPassword(e.target.value)} style={{ ...inputBase, paddingRight: 60 }} />
+                  <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: BRAND.sage, fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
+                    {showPw ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 600, color: 'rgba(192,198,204,0.7)', textTransform: 'uppercase', letterSpacing: '0.08em', display: 'block', marginBottom: 8, fontFamily: "'DM Sans', sans-serif" }}>Confirm Password</label>
+                <input
+                  type="password"
+                  placeholder="Repeat your password"
+                  value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
+                  style={{
+                    ...inputBase,
+                    borderColor: confirm.length > 0 ? (pwMatch ? 'rgba(74,222,128,0.5)' : 'rgba(248,113,113,0.5)') : 'rgba(255,255,255,0.15)',
+                  }}
+                />
+                {confirm.length > 0 && (
+                  <p style={{ fontSize: 12, marginTop: 6, color: pwMatch ? '#4ade80' : '#f87171', fontFamily: "'DM Sans', sans-serif" }}>
+                    {pwMatch ? '✓ Passwords match' : '✗ Passwords do not match'}
+                  </p>
+                )}
+              </div>
+
+              <LuxBtn
+                color={churchColor}
+                onClick={join}
+                disabled={loading}
+                style={{ width: '100%', fontSize: 15, padding: '14px 0', marginTop: 4 }}
+              >
+                {loading ? 'Creating account...' : `Join ${church.name}`}
+              </LuxBtn>
+            </div>
+          </div>
+        )}
+
+        <p className="text-center mt-8" style={{ fontFamily: "'Cormorant Garamond', serif", fontStyle: 'italic', color: 'rgba(192,198,204,0.25)', fontSize: 13 }}>
+          Floremus · We will flourish
+        </p>
+      </div>
+    </div>
+  );
+}
+// ── Live Points ────────────────────────────────────────────────────────────
 function LivePoints({ userId, initialPoints, color }: { userId: string; initialPoints: number; color: string }) {
   const [points, setPoints] = useState(initialPoints);
 
@@ -4148,32 +5757,47 @@ function LivePoints({ userId, initialPoints, color }: { userId: string; initialP
     return () => clearInterval(interval);
   }, [userId]);
 
-  return <span className="text-xs font-semibold text-gray-500">{points.toLocaleString()} pts</span>;
+  return (
+    <span
+      className="font-semibold"
+      style={{ color: `${color}99`, fontFamily: "'DM Sans', sans-serif", fontSize: 12 }}
+    >
+      {points.toLocaleString()} pts
+    </span>
+  );
 }
+
+// ── Main App ───────────────────────────────────────────────────────────────
 function App() {
   const [user, setUser] = useState<User | null>(null);
-const [tab, setTab] = useState('home');
+  const [tab, setTab] = useState('home');
   const [moreSub, setMoreSub] = useState('menu');
   const [loading, setLoading] = useState(true);
+  const [unreadDMs, setUnreadDMs] = useState(0);
 
   async function loadProfile(session: any) {
     const { data: profile } = await supabase.from('profiles')
       .select('*').eq('id', session.user.id).maybeSingle();
+
     if (profile?.church_id) {
       const { data: church } = await supabase.from('churches')
         .select('*').eq('id', profile.church_id).maybeSingle();
+
       if (church) {
         setUser({
           id: session.user.id,
           name: profile.full_name || '',
           email: session.user.email || '',
           role: profile.role || 'member',
+          secondaryRole: profile.secondary_role || '',
+          secondaryRole2: profile.secondary_role_2 || '',
           points: profile.points || 0,
           streak: profile.streak || 0,
           avatarUrl: profile.avatar_url || '',
           directoryOptIn: profile.directory_opt_in || false,
           bio: profile.bio || '',
           phone: profile.phone || '',
+          birthday: profile.birthday || '',
           church: {
             id: church.id,
             name: church.name,
@@ -4184,11 +5808,13 @@ const [tab, setTab] = useState('home');
             logoUrl: church.logo_url || '',
             subscriptionStatus: church.subscription_status || 'trial',
             subscriptionTier: church.subscription_tier || 'starter',
+            givingStripeLink: church.giving_stripe_link || '',
           },
         });
       }
     }
-    // Update streak on app open
+
+    // Streak tracking
     if (profile) {
       const today = new Date().toDateString();
       const lastOpen = localStorage.getItem(`last_open_${session.user.id}`);
@@ -4199,7 +5825,19 @@ const [tab, setTab] = useState('home');
         await supabase.from('profiles').update({ streak: newStreak }).eq('id', session.user.id);
       }
     }
+
     setLoading(false);
+  }
+
+  // Check unread DMs for notification badge
+  async function checkUnreadDMs(userId: string, churchId: string) {
+    const { count } = await supabase.from('direct_messages')
+      .select('*', { count: 'exact', head: true })
+      .eq('church_id', churchId)
+      .eq('member_id', userId)
+      .eq('is_from_admin', true)
+      .eq('read', false);
+    setUnreadDMs(count || 0);
   }
 
   useEffect(() => {
@@ -4207,13 +5845,16 @@ const [tab, setTab] = useState('home');
       if (session) loadProfile(session);
       else setLoading(false);
     });
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       if (session) loadProfile(session);
       else { setUser(null); setLoading(false); }
     });
+
     return () => subscription.unsubscribe();
   }, []);
 
+  // OneSignal permission request
   useEffect(() => {
     if (user) {
       const requestPermission = async () => {
@@ -4227,219 +5868,244 @@ const [tab, setTab] = useState('home');
         }
       };
       setTimeout(requestPermission, 3000);
+
+      // Check DMs on load
+      checkUnreadDMs(user.id, user.church.id);
+
+      // Poll for new DMs every 30 seconds
+      const dmInterval = setInterval(() => {
+        checkUnreadDMs(user.id, user.church.id);
+      }, 30000);
+
+      return () => clearInterval(dmInterval);
     }
   }, [user]);
+
+  // Loading splash screen
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: BRAND.plum }}>
-        <FloremusLogo size={120} variant="silver" />
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: `linear-gradient(160deg, ${BRAND.plum} 0%, #1a0535 100%)` }}
+      >
+        <div style={{ position: 'fixed', top: '15%', left: '50%', transform: 'translateX(-50%)', width: 500, height: 500, borderRadius: '50%', background: 'radial-gradient(circle, rgba(107,33,168,0.18) 0%, transparent 70%)', pointerEvents: 'none' }} />
+        <div className="relative z-10 flex flex-col items-center gap-6">
+          <FloremusLogo size={140} variant="silver" />
+          <div className="flex gap-1.5">
+            {[0, 1, 2].map(i => (
+              <div
+                key={i}
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: '50%',
+                  background: BRAND.purple,
+                  animation: `pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
+                  opacity: 0.7,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+        <style>{`@keyframes pulse { 0%,100%{transform:scale(0.8);opacity:0.4} 50%{transform:scale(1.2);opacity:1} }`}</style>
       </div>
     );
   }
-  function PaywallScreen({ user }: { user: User }) {
-  const plans = [
-    { name: 'Starter', price: '$69', link: 'https://buy.stripe.com/28E8wPevd5si2P09aub3q00' },
-    { name: 'Growth', price: '$147', link: 'https://buy.stripe.com/14AaEXdr94oedtE0DYb3q01' },
-    { name: 'Kingdom', price: '$247', link: 'https://buy.stripe.com/7sY00j1Ir1c261c9aub3q02' },
-  ];
 
-  return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-6">
-          <FloremusLogo size={120} variant="silver" />
-        </div>
-        <div className="text-center mb-8">
-          <h2 className="text-2xl font-bold text-white mb-2">Choose Your Plan</h2>
-          <p className="text-gray-400 text-sm">Select a plan to activate {user.church.name} on Floremus.</p>
-        </div>
-        <div className="space-y-3">
-          {plans.map((p, i) => (
-            <button key={i} onClick={() => window.open(p.link, '_blank')}
-              className="w-full p-4 rounded-2xl text-left flex items-center justify-between"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)' }}>
-              <div>
-                <p className="font-bold text-white">{p.name}</p>
-                <p className="text-gray-400 text-xs">per month</p>
-              </div>
-              <span className="text-2xl font-bold text-white">{p.price}</span>
-            </button>
-          ))}
-        </div>
-        <p className="text-center text-gray-500 text-xs mt-6">30-day money back guarantee. Cancel anytime.</p>
-        <button onClick={async () => { await supabase.auth.signOut(); window.location.reload(); }}
-          className="w-full mt-4 text-center text-sm" style={{ color: BRAND.sage }}>
-          Sign out
-        </button>
-      </div>
-    </div>
-  );
-}
-function JoinScreen({ code }: { code: string }) {
-  const [church, setChurch] = useState<any>(null);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-const { data: invite } = await supabase.from('invites').select('*, churches(*)').eq('code', code).eq('active', true).gt('expires_at', new Date().toISOString()).maybeSingle();
-      if (invite?.churches) setChurch(invite.churches);
-      else alert('This invite link is invalid or has expired.');
-    })();
-  }, [code]);
-
-  async function join() {
-    if (!name || !email || !password) { alert('Please fill in all fields'); return; }
-    if (password !== confirm) { alert('Passwords do not match'); return; }
-    if (password.length < 8) { alert('Password must be at least 8 characters'); return; }
-    setLoading(true);
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) { alert(error.message); setLoading(false); return; }
-    if (data.user) {
-      await supabase.from('profiles').insert({
-        id: data.user.id,
-        church_id: church.id,
-        full_name: name,
-        role: 'member',
-        points: 0,
-        streak: 0,
-      });
-      setDone(true);
-    }
-    setLoading(false);
+  // ── Route: Church Registration ─────────────────────────────────────────
+  if (window.location.pathname === '/ChurchRegistration') {
+    return <ChurchRegistrationScreen />;
   }
 
-  if (!church) return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: BRAND.plum }}>
-      <p className="text-white">Loading...</p>
-    </div>
-  );
+  // ── Route: Login ───────────────────────────────────────────────────────
+  if (window.location.pathname === '/login') {
+    if (user) { window.location.href = '/'; return null; }
+    return <LoginScreen onLogin={(u) => { setUser(u); }} />;
+  }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center px-6 py-10" style={{ backgroundColor: BRAND.plum }}>
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-6">
-          <FloremusLogo size={140} variant="withTagline" />
-        </div>
-        {done ? (
-          <div className="text-center p-6 rounded-xl" style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}>
-            <p className="text-3xl mb-3">🎉</p>
-            <p className="text-white font-bold text-xl mb-2">Welcome to {church.name}!</p>
-            <p className="text-gray-400 text-sm mb-4">Your account is ready. Sign in to get started.</p>
-            <button onClick={() => window.location.href = '/'}
-              className="w-full py-3 rounded-xl font-bold text-white"
-              style={{ backgroundColor: BRAND.purple }}>
-              Sign In Now
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <div className="text-center mb-4">
-              <p className="text-white font-bold text-xl">{church.name}</p>
-              <p className="text-gray-400 text-sm">You have been invited to join</p>
-            </div>
-            <input type="text" placeholder="Your full name" value={name}
-              onChange={e => setName(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <input type="email" placeholder="Email address" value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <input type="password" placeholder="Create a password" value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <input type="password" placeholder="Confirm password" value={confirm}
-              onChange={e => setConfirm(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl text-white border focus:outline-none"
-              style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderColor: 'rgba(255,255,255,0.15)' }} />
-            <button onClick={join} disabled={loading}
-              className="w-full py-3 rounded-xl font-bold text-white text-lg"
-              style={{ backgroundColor: church.primary_color || BRAND.purple, opacity: loading ? 0.7 : 1 }}>
-              {loading ? 'Creating account...' : `Join ${church.name}`}
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+  // ── Route: Email Confirm ───────────────────────────────────────────────
+  if (window.location.pathname === '/confirm') {
+    return <EmailConfirmScreen />;
+  }
 
-if (window.location.pathname === '/ChurchRegistration') {
-  return <ChurchRegistrationScreen />;
-}
+  // ── Route: Reset Password ──────────────────────────────────────────────
+  if (window.location.pathname === '/reset-password') {
+    return <ResetPasswordScreen />;
+  }
 
-if (window.location.pathname === '/login') {
-  if (user) { window.location.href = '/'; return null; }
-  return <LoginScreen onLogin={(u) => { setUser(u); }} />;
-}
+  // ── Route: Join ────────────────────────────────────────────────────────
+  if (window.location.pathname.startsWith('/join/')) {
+    const code = window.location.pathname.split('/join/')[1];
+    return <JoinScreen code={code} />;
+  }
 
-if (window.location.pathname === '/confirm') {
-  return <EmailConfirmScreen />;
-}
+  // ── Not logged in ──────────────────────────────────────────────────────
+  if (!user) {
+    window.location.href = '/login';
+    return null;
+  }
 
-if (window.location.pathname === '/reset-password') {
-  return <ResetPasswordScreen />;
-}
+  // ── Grace period for past_due or payment_failed ────────────────────────
+  if (
+    user.church.subscriptionStatus === 'past_due' ||
+    user.church.subscriptionStatus === 'payment_failed'
+  ) {
+    // Fetch the subscription failure date to calculate days remaining
+    const gracePeriodKey = `grace_start_${user.church.id}`;
+    const stored = localStorage.getItem(gracePeriodKey);
+    if (!stored) {
+      localStorage.setItem(gracePeriodKey, new Date().toISOString());
+    }
+    const graceStart = new Date(localStorage.getItem(gracePeriodKey) || new Date().toISOString());
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const daysPassed = Math.floor((Date.now() - graceStart.getTime()) / msPerDay);
+    const daysLeft = Math.max(0, 7 - daysPassed);
 
-if (window.location.pathname.startsWith('/join/')) {
-  const code = window.location.pathname.split('/join/')[1];
-  return <JoinScreen code={code} />;
-}
+    if (daysLeft === 0) {
+      return <PaywallScreen user={user} />;
+    }
 
-if (!user) {
-  window.location.href = '/login';
-  return null;
-}
+    return <GracePeriodScreen user={user} daysLeft={daysLeft} />;
+  }
 
+  // ── Full paywall for trial or inactive ─────────────────────────────────
   if (user.church.subscriptionStatus !== 'active') {
     return <PaywallScreen user={user} />;
   }
 
+  // ── Main App ───────────────────────────────────────────────────────────
   const color = user.church.primaryColor;
+
+  // Notification badge logic
+  const communityBadge = unreadDMs > 0 && !isAdmin(user);
+  const moreBadge = unreadDMs > 0 && !isAdmin(user);
 
   return (
     <div className="min-h-screen" style={{ backgroundColor: BRAND.bg }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400;1,600&family=DM+Sans:wght@300;400;500;600&display=swap');
+        * { -webkit-tap-highlight-color: transparent; }
+        input, textarea, select { font-family: 'DM Sans', sans-serif; }
+      `}</style>
+
       <div className="max-w-md mx-auto relative">
-        <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+
+        {/* Top bar */}
+        <div
+          className="sticky top-0 z-10 px-4 py-3 flex items-center justify-between"
+          style={{
+            background: 'rgba(255,255,255,0.96)',
+            backdropFilter: 'blur(20px)',
+            borderBottom: `1px solid ${color}12`,
+            boxShadow: `0 2px 20px ${color}08`,
+          }}
+        >
+          <div className="flex items-center gap-2.5">
             {user.church.logoUrl ? (
-              <img src={user.church.logoUrl} alt="logo" className="w-8 h-8 rounded-full object-contain" />
+              <img
+                src={user.church.logoUrl}
+                alt="logo"
+                className="rounded-full object-contain"
+                style={{ width: 34, height: 34, border: `1.5px solid ${color}25` }}
+              />
             ) : (
-              <img src={LOGOS.silver} alt="Floremus" className="w-8 h-8 object-contain" />
+              <div
+                className="flex items-center justify-center rounded-full font-bold text-white text-sm"
+                style={{
+                  width: 34,
+                  height: 34,
+                  background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+                  boxShadow: `0 2px 8px ${color}40`,
+                  fontFamily: "'DM Sans', sans-serif",
+                }}
+              >
+                {user.church.logoInitials}
+              </div>
             )}
             <div>
-              <p className="font-bold text-gray-800 text-sm leading-tight">{user.church.name}</p>
-              <p className="text-xs text-gray-400 italic">Floremus</p>
+              <p
+                className="font-bold text-gray-900 leading-tight"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16 }}
+              >
+                {user.church.name}
+              </p>
+              <p
+                className="leading-none mt-0.5 italic"
+                style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 11, color: `${color}80` }}
+              >
+                Floremus
+              </p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <LivePoints userId={user.id} initialPoints={user.points} color={user.church.primaryColor} />
-            <button onClick={() => setTab('more')}>
-              <Avatar url={user.avatarUrl} name={user.name || user.email} size={32} color={color} />
+
+          <div className="flex items-center gap-2.5">
+            <LivePoints userId={user.id} initialPoints={user.points} color={color} />
+            <button
+              onClick={() => {
+                setMoreSub('profile');
+                setTab('more');
+              }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+              <Avatar url={user.avatarUrl} name={user.name || user.email} size={30} color={color} />
             </button>
             <button
               onClick={async () => { await supabase.auth.signOut(); setUser(null); }}
-              className="text-xs text-gray-400 hover:text-red-400 ml-1">
+              className="text-xs font-medium"
+              style={{
+                color: `${color}60`,
+                background: `${color}08`,
+                border: `1px solid ${color}15`,
+                borderRadius: 8,
+                padding: '4px 10px',
+                fontFamily: "'DM Sans', sans-serif",
+                cursor: 'pointer',
+              }}
+            >
               Sign out
             </button>
           </div>
         </div>
 
+        {/* Screen content */}
         <div className="pb-20">
-          {tab === 'home' && <HomeScreen user={user} setActiveTab={setTab} setMoreSub={setMoreSub} />}
+          {tab === 'home' && (
+            <HomeScreen
+              user={user}
+              setActiveTab={(t) => {
+                setTab(t);
+                if (t !== 'more') setMoreSub('menu');
+              }}
+              setMoreSub={setMoreSub}
+            />
+          )}
           {tab === 'sunday' && <SundayScreen user={user} />}
           {tab === 'community' && <CommunityScreen user={user} />}
           {tab === 'groups' && <GroupsScreen user={user} />}
-          {tab === 'more' && <MoreScreen user={user} initialSub={moreSub} onSubChange={setMoreSub} />} 
+          {tab === 'more' && (
+            <MoreScreen
+              user={user}
+              initialSub={moreSub}
+              onSubChange={(s) => {
+                setMoreSub(s);
+                // Clear DM badge when user opens messages
+                if (s === 'dm') setUnreadDMs(0);
+              }}
+            />
+          )}
         </div>
 
-        <BottomNav active={tab} setActive={setTab} color={color} />
+        {/* Bottom navigation */}
+        <BottomNav
+          active={tab}
+          setActive={(t) => {
+            setTab(t);
+            setMoreSub('menu');
+          }}
+          color={color}
+          communityBadge={communityBadge}
+          moreBadge={moreBadge}
+        />
       </div>
     </div>
   );
