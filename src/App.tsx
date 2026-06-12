@@ -2406,7 +2406,9 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
  useEffect(() => {
-    chatEndRef.current?.scrollIntoView();
+    setTimeout(() => {
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }, 100);
   }, [msgs]);
 
   useEffect(() => {
