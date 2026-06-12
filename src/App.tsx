@@ -2405,10 +2405,11 @@ function CommunityScreen({ user }: { user: User }) {
     })));
   }
 
+ useEffect(() => {
+    chatEndRef.current?.scrollIntoView();
+  }, [msgs]);
+
   useEffect(() => {
-    useEffect(() => {
-  chatEndRef.current?.scrollIntoView();
-}, [msgs]);
     load();
     const channel = supabase.channel('community-chat')
       .on('postgres_changes', {
