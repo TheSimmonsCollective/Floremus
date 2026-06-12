@@ -2749,6 +2749,7 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
   const [name, setName] = useState(user.name || '');
   const [bio, setBio] = useState(user.bio || '');
   const [phone, setPhone] = useState(user.phone || '');
+  const [birthday, setBirthday] = useState((user as any).birthday || '');
   const [optIn, setOptIn] = useState(user.directoryOptIn || false);
   const [avatar, setAvatar] = useState(user.avatarUrl || '');
   const [uploading, setUploading] = useState(false);
@@ -2771,7 +2772,7 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
 
   async function save() {
     await supabase.from('profiles').update({
-      full_name: name, bio, phone, directory_opt_in: optIn,
+      full_name: name, bio, phone, directory_opt_in: optIn, birthday: birthday || null,
     }).eq('id', user.id);
     alert('Profile saved!');
   }
@@ -2804,6 +2805,11 @@ function ProfileScreen({ user, onBack }: { user: User; onBack: () => void }) {
           <div>
             <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Phone</label>
             <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
+              className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Birthday</label>
+            <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)}
               className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none" />
           </div>
           <div>
