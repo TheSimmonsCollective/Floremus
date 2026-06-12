@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, } from 'react';
 import { supabase } from './supabase';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -300,6 +300,7 @@ function ScreenHeader({ title, subtitle, color, children }: {
 }
 
 // ── Luxury card ────────────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function LuxCard({ children, color, style, className }: {
   children: React.ReactNode;
   color: string;
@@ -5037,13 +5038,7 @@ function PricingScreen({ user, onBack }: { user: User; onBack: () => void }) {
       ],
     },
   ];
-
-  const inputStyle: React.CSSProperties = {
-    padding: '8px 0',
-    fontFamily: "'DM Sans', sans-serif",
-    fontSize: 13,
-    color: '#4b5563',
-  };
+  
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
