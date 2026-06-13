@@ -2406,9 +2406,12 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
  useEffect(() => {
-    const container = document.getElementById('community-chat-messages');
-    if (container) container.scrollTop = container.scrollHeight;
-  }, [msgs]);
+  if (msgs.length === 0) return;
+  setTimeout(() => {
+    const anchor = document.getElementById('chat-anchor');
+    if (anchor) anchor.scrollIntoView({ behavior: 'auto' });
+  }, 50);
+}, [msgs]);
 
   useEffect(() => {
     load();
@@ -2587,95 +2590,394 @@ function CommunityScreen({ user }: { user: User }) {
         )}
 
         {/* Chat tab */}
-        {tab === 'chat' && (
+        // ── Premium Community Chat ─────────────────────────────────────────────────
+{tab === 'chat' && (
+  <div
+    className="rounded-3xl overflow-hidden flex flex-col"
+    style={{
+      background: BRAND.white,
+      border: `1px solid ${color}20`,
+      boxShadow: `0 8px 40px ${color}12`,
+      height: '65vh',
+      position: 'relative',
+    }}
+  >
+    <style>{`
+      @keyframes slideUp {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes typingPulse {
+        0%, 100% { transform: translateY(0); opacity: 0.4; }
+        50% { transform: translateY(-4px); opacity: 1; }
+      }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      .chat-message-new {
+        animation: slideUp 0.3s ease forwards;
+      }
+      .typing-dot {
+        animation: typingPulse 1s ease-in-out infinite;
+      }
+      .typing-dot:nth-child(2) { animation-delay: 0.15s; }
+      .typing-dot:nth-child(3) { animation-delay: 0.3s; }
+      .reaction-strip {
+        animation: fadeIn 0.2s ease forwards;
+      }
+      .message-bubble:active .reaction-strip {
+        display: flex;
+      }
+    `}</style>
+
+    {/* Header */}
+    <div
+      style={{
+        padding: '14px 16px',
+        background: `linear-gradient(160deg, ${color}12 0%, ${color}04 100%)`,
+        borderBottom: `1px solid ${color}12`,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {user.church.logoUrl ? (
+          <img
+            src={user.church.logoUrl}
+            alt="church"
+            style={{ width: 36, height: 36, borderRadius: '50%', objectFit: 'contain', border: `2px solid ${color}30` }}
+          />
+        ) : (
           <div
-            className="rounded-3xl overflow-hidden"
             style={{
-              background: BRAND.white,
-              border: `1px solid ${color}15`,
-              boxShadow: `0 2px 16px ${color}08`,
-              height: '62vh',
-              display: 'flex',
-              flexDirection: 'column',
+              width: 36, height: 36, borderRadius: '50%',
+              background: `linear-gradient(135deg, ${color}, ${color}cc)`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: BRAND.white, fontWeight: 700, fontSize: 14,
+              fontFamily: "'DM Sans', sans-serif",
+              boxShadow: `0 2px 8px ${color}40`,
             }}
           >
-            <div
-              className="p-4"
-              style={{ borderBottom: `1px solid ${color}10` }}
-            >
-              <p className="font-bold text-gray-800" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20 }}>Church Chat</p>
-              <p className="text-xs text-gray-400" style={{ fontFamily: "'DM Sans', sans-serif" }}>All members</p>
-            </div>
-
-            {/* Messages newest at bottom, flex-col-reverse for scroll */}
-            <div
-  className="flex-1 overflow-y-auto p-4"
-  style={{ gap: 12, display: 'flex', flexDirection: 'column' }}
->
-  <div>
-    {[...msgs].reverse().map((m, i) => {
-                  const own = m.author_id === user.id;
-                  return (
-                    <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
-                      {!own && (
-                        <Avatar url={m.author_avatar} name={m.author_name} size={26} color={color} />
-                      )}
-                      <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
-                        {!own && (
-                          <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.author_name}</p>
-                        )}
-                        {m.content && (
-                          <div
-                            className="px-4 py-2.5 rounded-2xl text-sm"
-                            style={{
-                              background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
-                              color: own ? BRAND.white : '#1F2937',
-                              fontFamily: "'DM Sans', sans-serif",
-                              boxShadow: own ? `0 4px 12px ${color}30` : 'none',
-                              borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                            }}
-                          >
-                            {m.content}
-                          </div>
-                        )}
-                        {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
-                      </div>
-                    </div>
-                  );
-                })}
-             <div ref={chatEndRef} />
-              </div>
-            </div>
-
-            {/* Chat input */}
-            <div
-              className="p-3"
-              style={{ borderTop: `1px solid ${color}10` }}
-            >
-              {chatMedia && (
-                <div className="mb-2">
-                  <MediaDisplay url={chatMedia.url} type={chatMedia.type} />
-                  <button onClick={() => setChatMedia(null)} className="text-xs text-red-400 mt-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>Remove</button>
-                </div>
-              )}
-              <div className="flex gap-2 items-center">
-                <MediaPicker folder="chat" onUpload={(url, type) => setChatMedia({ url, type })} />
-                <input
-                  type="text"
-                  placeholder="Type a message..."
-                  value={chatText}
-                  onChange={e => setChatText(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
-                  className="flex-1 px-4 py-2.5 rounded-2xl text-sm focus:outline-none"
-                  style={{ border: `1.5px solid ${color}20`, background: `${color}06`, fontFamily: "'DM Sans', sans-serif" }}
-                />
-                <LuxBtn color={color} onClick={sendChat} style={{ padding: '10px 18px', fontSize: 13, flexShrink: 0 }}>
-                  Send
-                </LuxBtn>
-              </div>
-            </div>
+            {user.church.logoInitials}
           </div>
         )}
+        <div>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 18, fontWeight: 700, color: '#111', lineHeight: 1.2 }}>
+            Church Chat
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#4ade80', boxShadow: '0 0 6px rgba(74,222,128,0.6)' }} />
+            <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: '#4ade80', fontWeight: 600 }}>Live</p>
+          </div>
+        </div>
+      </div>
+      <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: `${color}80`, fontWeight: 500 }}>
+        {msgs.length} messages
+      </p>
+    </div>
+
+    {/* Messages area */}
+    <div
+      id="community-chat-messages"
+      style={{
+        flex: 1,
+        overflowY: 'auto',
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+      }}
+    >
+      {msgs.length === 0 ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+          <div
+            style={{
+              width: 72, height: 72, borderRadius: '50%',
+              background: `linear-gradient(135deg, ${color}18, ${color}08)`,
+              border: `2px solid ${color}20`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 32,
+              boxShadow: `0 0 32px ${color}15`,
+            }}
+          >
+            💬
+          </div>
+          <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 20, color: '#111', fontWeight: 600 }}>
+            Start the conversation
+          </p>
+          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 13, color: '#9CA3AF', fontStyle: 'italic', textAlign: 'center', maxWidth: 220 }}>
+            Be the first to share something with your church family
+          </p>
+        </div>
+      ) : (
+        (() => {
+          const groups: { date: string; messages: typeof msgs }[] = [];
+          msgs.forEach(m => {
+            const date = new Date(m.created_at).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            const today = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            const yesterday = new Date(Date.now() - 86400000).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            const label = date === today ? 'Today' : date === yesterday ? 'Yesterday' : date;
+            const existing = groups.find(g => g.date === label);
+            if (existing) existing.messages.push(m);
+            else groups.push({ date: label, messages: [m] });
+          });
+
+          return groups.map((group, gi) => (
+            <div key={gi}>
+              {/* Date divider */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '16px 0 12px' }}>
+                <div style={{ flex: 1, height: 1, background: `${color}12` }} />
+                <span
+                  style={{
+                    fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 600,
+                    color: `${color}80`, padding: '3px 12px', borderRadius: 20,
+                    background: `${color}0a`, border: `1px solid ${color}15`,
+                  }}
+                >
+                  {group.date}
+                </span>
+                <div style={{ flex: 1, height: 1, background: `${color}12` }} />
+              </div>
+
+              {group.messages.map((m, i) => {
+                const own = m.author_id === user.id;
+                const isAdminSender = m.author_name === user.name && isAdmin(user);
+                const showAvatar = !own && (i === 0 || group.messages[i - 1]?.author_id !== m.author_id);
+                const isLast = i === group.messages.length - 1 || group.messages[i + 1]?.author_id !== m.author_id;
+
+                return (
+                  <div
+                    key={m.id}
+                    className="chat-message-new"
+                    style={{
+                      display: 'flex',
+                      flexDirection: own ? 'row-reverse' : 'row',
+                      alignItems: 'flex-end',
+                      gap: 8,
+                      marginBottom: isLast ? 12 : 3,
+                    }}
+                  >
+                    {/* Avatar */}
+                    {!own && (
+                      <div style={{ width: 32, flexShrink: 0, alignSelf: 'flex-end' }}>
+                        {showAvatar ? (
+                          <div style={{ position: 'relative' }}>
+                            <Avatar url={m.author_avatar} name={m.author_name} size={28} color={color} />
+                            {isAdminSender && (
+                              <div
+                                style={{
+                                  position: 'absolute', bottom: -2, right: -2,
+                                  width: 14, height: 14, borderRadius: '50%',
+                                  background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontSize: 8, border: '1.5px solid white',
+                                }}
+                              >
+                                👑
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ width: 28 }} />
+                        )}
+                      </div>
+                    )}
+
+                    <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', alignItems: own ? 'flex-end' : 'flex-start' }}>
+                      {/* Name */}
+                      {!own && showAvatar && (
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 11, color: `${color}90`, fontWeight: 600, marginBottom: 4, marginLeft: 4 }}>
+                          {m.author_name}
+                          {isAdminSender && <span style={{ color: '#f59e0b', marginLeft: 4 }}>· Admin</span>}
+                        </p>
+                      )}
+
+                      {/* Bubble */}
+                      <div
+                        className="message-bubble"
+                        style={{
+                          padding: '10px 14px',
+                          background: own
+                            ? `linear-gradient(135deg, ${color}, ${color}dd)`
+                            : `${color}0e`,
+                          color: own ? BRAND.white : '#1F2937',
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: 14,
+                          lineHeight: 1.5,
+                          boxShadow: own ? `0 4px 16px ${color}35` : `0 1px 4px ${color}10`,
+                          borderRadius: own
+                            ? (isLast ? '18px 18px 4px 18px' : '18px 18px 18px 18px')
+                            : (isLast ? '18px 18px 18px 4px' : '18px 18px 18px 18px'),
+                          position: 'relative',
+                        }}
+                      >
+                        {m.content}
+                      </div>
+
+                      {/* Media */}
+                      {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
+
+                      {/* Timestamp */}
+                      {isLast && (
+                        <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: 10, color: '#9CA3AF', marginTop: 4, marginLeft: own ? 0 : 4, marginRight: own ? 4 : 0 }}>
+                          {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ));
+        })()
+      )}
+
+      {/* Typing indicator */}
+      {false && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+          <div style={{ width: 28, height: 28, borderRadius: '50%', background: `${color}15` }} />
+          <div
+            style={{
+              padding: '10px 14px', borderRadius: '18px 18px 18px 4px',
+              background: `${color}0e`, display: 'flex', gap: 4, alignItems: 'center',
+            }}
+          >
+            {[0, 1, 2].map(i => (
+              <div
+                key={i}
+                className="typing-dot"
+                style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: color, animationDelay: `${i * 0.15}s`,
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Scroll anchor */}
+      <div id="chat-anchor" style={{ height: 1 }} />
+    </div>
+
+    {/* Input area */}
+    <div
+      style={{
+        padding: '10px 12px',
+        background: BRAND.white,
+        borderTop: `1px solid ${color}10`,
+        backgroundImage: `linear-gradient(to bottom, ${color}06, transparent)`,
+        backgroundSize: '100% 3px',
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'top',
+      }}
+    >
+      {/* Media preview */}
+      {chatMedia && (
+        <div style={{ marginBottom: 8, position: 'relative', display: 'inline-block' }}>
+          <MediaDisplay url={chatMedia.url} type={chatMedia.type} />
+          <button
+            onClick={() => setChatMedia(null)}
+            style={{
+              position: 'absolute', top: 4, right: 4,
+              width: 20, height: 20, borderRadius: '50%',
+              background: 'rgba(0,0,0,0.5)', border: 'none',
+              color: BRAND.white, fontSize: 10, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* Media button */}
+        <button
+          onClick={() => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = 'image/*,video/*,.pdf';
+            input.onchange = async (e) => {
+              const file = (e.target as HTMLInputElement).files?.[0];
+              if (!file) return;
+              const result = await uploadMedia(file, 'chat');
+              if (result) setChatMedia({ url: result.url, type: result.type });
+            };
+            input.click();
+          }}
+          style={{
+            flexShrink: 0,
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '8px 12px', borderRadius: 20,
+            background: `linear-gradient(135deg, ${color}15, ${color}08)`,
+            border: `1.5px solid ${color}25`,
+            color, cursor: 'pointer',
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 12, fontWeight: 600,
+            transition: 'all 0.2s',
+            boxShadow: `0 2px 8px ${color}10`,
+          }}
+        >
+          <span style={{ fontSize: 14 }}>📎</span>
+          <span>Media</span>
+        </button>
+
+        {/* Text input */}
+        <input
+          type="text"
+          placeholder="Say something..."
+          value={chatText}
+          onChange={e => setChatText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+          style={{
+            flex: 1,
+            padding: '10px 16px',
+            borderRadius: 24,
+            border: `1.5px solid ${color}20`,
+            background: `${color}06`,
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: 14,
+            color: '#1F2937',
+            outline: 'none',
+            transition: 'border-color 0.2s, box-shadow 0.2s',
+          }}
+          onFocus={e => {
+            e.target.style.borderColor = `${color}60`;
+            e.target.style.boxShadow = `0 0 0 3px ${color}12`;
+          }}
+          onBlur={e => {
+            e.target.style.borderColor = `${color}20`;
+            e.target.style.boxShadow = 'none';
+          }}
+        />
+
+        {/* Send button */}
+        <button
+          onClick={sendChat}
+          style={{
+            flexShrink: 0,
+            width: 42, height: 42, borderRadius: '50%',
+            background: chatText.trim() || chatMedia
+              ? `linear-gradient(135deg, ${color}, ${color}cc)`
+              : `${color}15`,
+            border: 'none', cursor: 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 16,
+            boxShadow: chatText.trim() || chatMedia ? `0 4px 16px ${color}40` : 'none',
+            transition: 'all 0.2s',
+            transform: chatText.trim() || chatMedia ? 'scale(1)' : 'scale(0.9)',
+          }}
+        >
+<span style={{ transform: 'rotate(45deg)', display: 'inline-block', color: chatText.trim() || chatMedia ? BRAND.white : `${color}60` }}>{'>'}</span>  &gt;
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
       </div>
     </div>
   );
