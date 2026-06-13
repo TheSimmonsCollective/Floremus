@@ -2401,28 +2401,28 @@ function CommunityScreen({ user }: { user: User }) {
   if (dv) setDevotionals(dv);
 
   const { data: cm } = await supabase.from('chat_messages')
-    .select('*, profiles(full_name, avatar_url)')
-    .eq('church_id', user.church.id)
-    .is('group_id', null)
-    .eq('is_deleted', false)
-    .order('created_at', { ascending: false })
-    .limit(50);
+  .select('*, profiles(full_name, avatar_url)')
+  .eq('church_id', user.church.id)
+  .is('group_id', null)
+  .eq('is_deleted', false)
+  .order('created_at', { ascending: false })
+  .limit(50);
 
-  if (cm) {
-    setMsgs(
-      [...cm].reverse().map((m: any): Message => ({
-        id: m.id,
-        content: m.content,
-        author_id: m.author_id,
-        author_name: m.profiles?.full_name || 'Member',
-        author_avatar: m.profiles?.avatar_url,
-        created_at: m.created_at,
-        group_id: null,
-        media_url: m.media_url,
-        media_type: m.media_type,
-      }))
-    );
-  }
+if (cm) {
+  setMsgs(
+    [...cm].reverse().map((m: any): Message => ({
+      id: m.id,
+      content: m.content,
+      author_id: m.author_id,
+      author_name: m.profiles?.full_name || 'Member',
+      author_avatar: m.profiles?.avatar_url,
+      created_at: m.created_at,
+      group_id: null,
+      media_url: m.media_url,
+      media_type: m.media_type,
+    }))
+  );
+}
 }
 
 function scrollCommunityChatToBottom(behavior: ScrollBehavior = 'auto') {
@@ -3141,6 +3141,7 @@ function GroupsScreen({ user }: { user: User }) {
   const [board, setBoard] = useState<any[]>([]);
   const [selGroup, setSelGroup] = useState<any>(null);
   const [gMsgs, setGMsgs] = useState<Message[]>([]);
+  const groupMessagesContainerRef = useRef<HTMLDivElement>(null);
   const [chatText, setChatText] = useState('');
   const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
   const color = user.church.primaryColor;
@@ -3157,47 +3158,79 @@ function GroupsScreen({ user }: { user: User }) {
     })();
   }, [user.church.id]);
 
-  useEffect(() => {
-    if (!selGroup) return;
-    (async () => {
-      const { data } = await supabase.from('chat_messages')
-        .select('*, profiles(full_name, avatar_url)')
-        .eq('group_id', selGroup.id).eq('is_deleted', false)
-        .order('created_at', { ascending: false }).limit(50);
-      if (data) setGMsgs(data.map((m: any) => ({
-        id: m.id,
-        content: m.content,
-        author_id: m.author_id,
-        author_name: m.profiles?.full_name || 'Member',
-        author_avatar: m.profiles?.avatar_url,
-        created_at: m.created_at,
-        group_id: m.group_id,
-        media_url: m.media_url,
-        media_type: m.media_type,
-      })));
-    })();
-    const channel = supabase.channel(`group-${selGroup.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'chat_messages',
-        filter: `group_id=eq.${selGroup.id}`,
-      }, (payload: any) => {
-        setGMsgs(prev => [
-          {
-            id: payload.new.id,
-            content: payload.new.content,
-            author_id: payload.new.author_id,
-            author_name: 'Member',
-            created_at: payload.new.created_at,
-            group_id: payload.new.group_id,
-            media_url: payload.new.media_url,
-            media_type: payload.new.media_type,
-          },
-          ...prev,
-        ]);
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [selGroup]);
+useEffect(() => {
+  if (!selGroup) return;
+
+  (async () => {
+    const { data } = await supabase.from('chat_messages')
+      .select('*, profiles(full_name, avatar_url)')
+      .eq('group_id', selGroup.id)
+      .eq('is_deleted', false)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (data) {
+      setGMsgs(
+        [...data].reverse().map((m: any): Message => ({
+          id: m.id,
+          content: m.content,
+          author_id: m.author_id,
+          author_name: m.profiles?.full_name || 'Member',
+          author_avatar: m.profiles?.avatar_url,
+          created_at: m.created_at,
+          group_id: m.group_id,
+          media_url: m.media_url,
+          media_type: m.media_type,
+        }))
+      );
+    }
+  })();
+
+  const channel = supabase.channel(`group-${selGroup.id}`)
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'chat_messages',
+      filter: `group_id=eq.${selGroup.id}`,
+    }, (payload: any) => {
+      const incoming: Message = {
+        id: payload.new.id,
+        content: payload.new.content,
+        author_id: payload.new.author_id,
+        author_name: 'Member',
+        created_at: payload.new.created_at,
+        group_id: payload.new.group_id,
+        media_url: payload.new.media_url,
+        media_type: payload.new.media_type,
+      };
+
+      setGMsgs(prev => {
+        if (prev.some(m => m.id === incoming.id)) return prev;
+        return [...prev, incoming];
+      });
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
+}, [selGroup]);
+  useLayoutEffect(() => {
+  if (!selGroup) return;
+  if (gMsgs.length === 0) return;
+
+  const el = groupMessagesContainerRef.current;
+  if (!el) return;
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: 'auto',
+      });
+    });
+  });
+}, [selGroup, gMsgs.length]);
 
   async function sendMsg() {
     if (!chatText.trim() && !chatMedia) return;
@@ -3243,40 +3276,55 @@ function GroupsScreen({ user }: { user: User }) {
         </div>
 
         {/* Messages newest at bottom using flex-col-reverse */}
-<div className="flex-1 overflow-y-auto p-4" id="community-chat-messages" style={{ display: 'flex', flexDirection: 'column' }}>
+<div
+  ref={groupMessagesContainerRef}
+  className="flex-1 overflow-y-auto p-4"
+  id="group-chat-messages"
+  style={{
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  }}
+>
   <div>
-    {[...gMsgs].reverse().map((m, i) => {
-              const own = m.author_id === user.id;
-              return (
-                <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
-                  {!own && (
-                    <Avatar url={m.author_avatar} name={m.author_name} size={26} color={color} />
-                  )}
-                  <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
-                    {!own && (
-                      <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>{m.author_name}</p>
-                    )}
-                    {m.content && (
-                      <div
-                        className="px-4 py-2.5 text-sm"
-                        style={{
-                          background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
-                          color: own ? BRAND.white : '#1F2937',
-                          fontFamily: "'DM Sans', sans-serif",
-                          boxShadow: own ? `0 4px 12px ${color}30` : 'none',
-                          borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
-                        }}
-                      >
-                        {m.content}
-                      </div>
-                    )}
-                    {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
-                  </div>
-                </div>
-              );
-            })}
+    {gMsgs.map((m, i) => {
+      const own = m.author_id === user.id;
+
+      return (
+        <div key={i} className={`flex gap-2 mb-3 ${own ? 'flex-row-reverse' : ''}`}>
+          {!own && (
+            <Avatar url={m.author_avatar} name={m.author_name} size={26} color={color} />
+          )}
+
+          <div className={`max-w-xs flex flex-col ${own ? 'items-end' : 'items-start'}`}>
+            {!own && (
+              <p className="text-xs text-gray-400 mb-1" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                {m.author_name}
+              </p>
+            )}
+
+            {m.content && (
+              <div
+                className="px-4 py-2.5 text-sm"
+                style={{
+                  background: own ? `linear-gradient(135deg, ${color}, ${color}dd)` : `${color}0d`,
+                  color: own ? BRAND.white : '#1F2937',
+                  fontFamily: "'DM Sans', sans-serif",
+                  boxShadow: own ? `0 4px 12px ${color}30` : 'none',
+                  borderRadius: own ? '18px 18px 4px 18px' : '18px 18px 18px 4px',
+                }}
+              >
+                {m.content}
+              </div>
+            )}
+
+            {m.media_url && <MediaDisplay url={m.media_url} type={m.media_type || 'image'} />}
           </div>
         </div>
+      );
+    })}
+  </div>
+</div>
 
         <div className="p-3" style={{ borderTop: `1px solid ${color}10` }}>
           {chatMedia && (
