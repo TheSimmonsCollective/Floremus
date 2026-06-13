@@ -2405,13 +2405,8 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
 useEffect(() => {
-  if (msgs.length === 0) return;
-  setTimeout(() => {
-    const anchor = document.getElementById('chat-anchor');
-    if (anchor) anchor.scrollIntoView({ behavior: 'auto' });
-    const container = document.getElementById('community-chat-messages');
-    if (container) container.scrollTop = container.scrollHeight + 9999;
-  }, 500);
+  const bottom = document.getElementById('chat-anchor');
+  if (bottom) bottom.scrollIntoView();
 }, [msgs]);
 
   useEffect(() => {
@@ -2681,14 +2676,11 @@ useEffect(() => {
     {/* Messages area */}
     <div
       id="community-chat-messages"
-      style={{
-        flex: 1,
-        overflowY: 'auto',
-        padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 2,
-      }}
+     style={{
+  flex: 1,
+  overflowY: 'auto',
+  padding: '16px',
+}}
     >
       {msgs.length === 0 ? (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
