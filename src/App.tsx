@@ -2390,8 +2390,8 @@ function CommunityScreen({ user }: { user: User }) {
     const { data: cm } = await supabase.from('chat_messages')
       .select('*, profiles(full_name, avatar_url)')
       .eq('church_id', user.church.id).is('group_id', null).eq('is_deleted', false)
-      .order('created_at', { ascending: false }).limit(50);
-    if (cm) setMsgs(cm.map((m: any) => ({
+      .order('created_at', { ascending: true }).limit(50);
+      if (cm) setMsgs(cm.map((m: any) => ({
       id: m.id,
       content: m.content,
       author_id: m.author_id,
@@ -2404,12 +2404,14 @@ function CommunityScreen({ user }: { user: User }) {
     })));
   }
 
- useEffect(() => {
+useEffect(() => {
   if (msgs.length === 0) return;
   setTimeout(() => {
     const anchor = document.getElementById('chat-anchor');
     if (anchor) anchor.scrollIntoView({ behavior: 'auto' });
-  }, 50);
+    const container = document.getElementById('community-chat-messages');
+    if (container) container.scrollTop = container.scrollHeight + 9999;
+  }, 200);
 }, [msgs]);
 
   useEffect(() => {
