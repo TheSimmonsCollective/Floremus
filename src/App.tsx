@@ -2411,7 +2411,7 @@ useEffect(() => {
     if (anchor) anchor.scrollIntoView({ behavior: 'auto' });
     const container = document.getElementById('community-chat-messages');
     if (container) container.scrollTop = container.scrollHeight + 9999;
-  }, 200);
+  }, 500);
 }, [msgs]);
 
   useEffect(() => {
