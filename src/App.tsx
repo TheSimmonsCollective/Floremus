@@ -2370,6 +2370,7 @@ function CommunityScreen({ user }: { user: User }) {
   const [isPrivate, setIsPrivate] = useState(false);
   const [prayerMedia, setPrayerMedia] = useState<{ url: string; type: string } | null>(null);
   const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const color = user.church.primaryColor;
 
   async function load() {
@@ -2405,8 +2406,12 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
 useEffect(() => {
-  const bottom = document.getElementById('chat-anchor');
-  if (bottom) bottom.scrollIntoView();
+  if (msgs.length === 0) return;
+  requestAnimationFrame(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+    }
+  });
 }, [msgs]);
 
   useEffect(() => {
@@ -2676,6 +2681,7 @@ useEffect(() => {
     {/* Messages area */}
     <div
       id="community-chat-messages"
+      ref={messagesContainerRef}
      style={{
   flex: 1,
   overflowY: 'auto',
