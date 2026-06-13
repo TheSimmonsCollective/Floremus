@@ -2370,7 +2370,6 @@ function CommunityScreen({ user }: { user: User }) {
   const [isPrivate, setIsPrivate] = useState(false);
   const [prayerMedia, setPrayerMedia] = useState<{ url: string; type: string } | null>(null);
   const [chatMedia, setChatMedia] = useState<{ url: string; type: string } | null>(null);
-  const chatEndRef = useRef<HTMLDivElement>(null);
   const color = user.church.primaryColor;
 
   async function load() {
@@ -2590,7 +2589,6 @@ function CommunityScreen({ user }: { user: User }) {
         )}
 
         {/* Chat tab */}
-        // ── Premium Community Chat ─────────────────────────────────────────────────
 {tab === 'chat' && (
   <div
     className="rounded-3xl overflow-hidden flex flex-col"
