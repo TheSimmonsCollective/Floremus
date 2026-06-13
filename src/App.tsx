@@ -2406,8 +2406,8 @@ function CommunityScreen({ user }: { user: User }) {
   }
 
  useEffect(() => {
-    const el = chatEndRef.current?.parentElement;
-    if (el) el.scrollTop = el.scrollHeight;
+    const container = document.getElementById('community-chat-messages');
+    if (container) container.scrollTop = container.scrollHeight;
   }, [msgs]);
 
   useEffect(() => {
@@ -2906,7 +2906,7 @@ function GroupsScreen({ user }: { user: User }) {
         </div>
 
         {/* Messages newest at bottom using flex-col-reverse */}
-        <div className="flex-1 overflow-y-auto p-4" style={{ display: 'flex', flexDirection: 'column' }}>
+<div className="flex-1 overflow-y-auto p-4" id="community-chat-messages" style={{ display: 'flex', flexDirection: 'column' }}>
   <div>
     {[...gMsgs].reverse().map((m, i) => {
               const own = m.author_id === user.id;
