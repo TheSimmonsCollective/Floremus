@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect, useRef, } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { supabase } from './supabase';
 import { QRCodeSVG } from 'qrcode.react';
 
@@ -2374,45 +2374,77 @@ function CommunityScreen({ user }: { user: User }) {
   const color = user.church.primaryColor;
 
   async function load() {
-    const { data: pr } = await supabase.from('prayer_requests')
-      .select('*, profiles(full_name, avatar_url)')
-      .eq('church_id', user.church.id).eq('is_private', false).eq('is_answered', false)
-      .order('created_at', { ascending: false }).limit(10);
-    if (pr) setPrayers(pr);
+  const { data: pr } = await supabase.from('prayer_requests')
+    .select('*, profiles(full_name, avatar_url)')
+    .eq('church_id', user.church.id)
+    .eq('is_private', false)
+    .eq('is_answered', false)
+    .order('created_at', { ascending: false })
+    .limit(10);
 
-    const { data: ch } = await supabase.from('challenges').select('*')
-      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(5);
-    if (ch) setChallenges(ch);
+  if (pr) setPrayers(pr);
 
-    const { data: dv } = await supabase.from('devotionals').select('*')
-      .eq('church_id', user.church.id).order('created_at', { ascending: false }).limit(7);
-    if (dv) setDevotionals(dv);
+  const { data: ch } = await supabase.from('challenges')
+    .select('*')
+    .eq('church_id', user.church.id)
+    .order('created_at', { ascending: false })
+    .limit(5);
 
-    const { data: cm } = await supabase.from('chat_messages')
-      .select('*, profiles(full_name, avatar_url)')
-      .eq('church_id', user.church.id).is('group_id', null).eq('is_deleted', false)
-      .order('created_at', { ascending: true }).limit(50);
-      if (cm) setMsgs(cm.map((m: any) => ({
-      id: m.id,
-      content: m.content,
-      author_id: m.author_id,
-      author_name: m.profiles?.full_name || 'Member',
-      author_avatar: m.profiles?.avatar_url,
-      created_at: m.created_at,
-      group_id: null,
-      media_url: m.media_url,
-      media_type: m.media_type,
-    })));
+  if (ch) setChallenges(ch);
+
+  const { data: dv } = await supabase.from('devotionals')
+    .select('*')
+    .eq('church_id', user.church.id)
+    .order('created_at', { ascending: false })
+    .limit(7);
+
+  if (dv) setDevotionals(dv);
+
+  const { data: cm } = await supabase.from('chat_messages')
+    .select('*, profiles(full_name, avatar_url)')
+    .eq('church_id', user.church.id)
+    .is('group_id', null)
+    .eq('is_deleted', false)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  if (cm) {
+    setMsgs(
+      [...cm].reverse().map((m: any): Message => ({
+        id: m.id,
+        content: m.content,
+        author_id: m.author_id,
+        author_name: m.profiles?.full_name || 'Member',
+        author_avatar: m.profiles?.avatar_url,
+        created_at: m.created_at,
+        group_id: null,
+        media_url: m.media_url,
+        media_type: m.media_type,
+      }))
+    );
   }
+}
 
-useEffect(() => {
-  if (msgs.length === 0) return;
+function scrollCommunityChatToBottom(behavior: ScrollBehavior = 'auto') {
+  const el = messagesContainerRef.current;
+  if (!el) return;
+
   requestAnimationFrame(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
-    }
+    requestAnimationFrame(() => {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior,
+      });
+    });
   });
-}, [msgs]);
+}
+
+useLayoutEffect(() => {
+  if (tab !== 'chat') return;
+  if (msgs.length === 0) return;
+
+  scrollCommunityChatToBottom('auto');
+}, [tab, msgs.length]);
 
   useEffect(() => {
     load();
@@ -2421,19 +2453,23 @@ useEffect(() => {
         event: 'INSERT', schema: 'public', table: 'chat_messages',
         filter: `church_id=eq.${user.church.id}`,
       }, (payload: any) => {
-        setMsgs(prev => [
-          {
-            id: payload.new.id,
-            content: payload.new.content,
-            author_id: payload.new.author_id,
-            author_name: 'Member',
-            created_at: payload.new.created_at,
-            group_id: null,
-            media_url: payload.new.media_url,
-            media_type: payload.new.media_type,
-          },
-          ...prev,
-        ]);
+       if (payload.new.group_id !== null) return;
+
+const incoming: Message = {
+  id: payload.new.id,
+  content: payload.new.content,
+  author_id: payload.new.author_id,
+  author_name: 'Member',
+  created_at: payload.new.created_at,
+  group_id: null,
+  media_url: payload.new.media_url,
+  media_type: payload.new.media_type,
+};
+
+setMsgs(prev => {
+  if (prev.some(m => m.id === incoming.id)) return prev;
+  return [...prev, incoming];
+}); 
       })
       .subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -2686,6 +2722,7 @@ useEffect(() => {
   flex: 1,
   overflowY: 'auto',
   padding: '16px',
+  minHeight: 0,
 }}
     >
       {msgs.length === 0 ? (
